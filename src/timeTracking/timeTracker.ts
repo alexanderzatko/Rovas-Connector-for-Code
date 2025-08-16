@@ -42,6 +42,10 @@ export class TimeTracker {
   private registerListeners() {
     vscode.workspace.onDidChangeTextDocument(() => this.recordActivity());
     vscode.window.onDidChangeActiveTextEditor(() => this.recordActivity());
+    vscode.window.onDidChangeWindowState(() => this.recordActivity());
+    vscode.window.onDidChangeVisibleTextEditors(() => this.recordActivity());
+    vscode.window.onDidChangeActiveTerminal?.(() => this.recordActivity());
+    // Add more events as needed for broader activity coverage
   }
 
   private recordActivity() {

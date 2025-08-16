@@ -109,6 +109,28 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(resetDisposable);
 
+	// Command to manage Project ID history
+	const manageProjectIdsDisposable = vscode.commands.registerCommand('rovas-connector.manageProjectIds', async () => {
+		let projectIdHistory: string[] = context.globalState.get('projectIdHistory', []);
+		if (projectIdHistory.length === 0) {
+			vscode.window.showInformationMessage('No Project IDs to manage.');
+			return;
+		}
+		const items = projectIdHistory.map(id => ({ label: id, description: 'Remove this Project ID' }));
+		const selected = await vscode.window.showQuickPick(items, {
+			placeHolder: 'Select Project ID to remove from history',
+			canPickMany: true,
+			ignoreFocusOut: true
+		});
+		if (selected && selected.length > 0) {
+			const idsToRemove = selected.map(item => item.label);
+			projectIdHistory = projectIdHistory.filter(id => !idsToRemove.includes(id));
+			await context.globalState.update('projectIdHistory', projectIdHistory);
+			vscode.window.showInformationMessage('Selected Project IDs removed from history.');
+		}
+	});
+	context.subscriptions.push(manageProjectIdsDisposable);
+
 	// Listen for git commit events using polling for HEAD changes
 	const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
 	if (gitExtension) {
@@ -150,6 +172,43 @@ export function activate(context: vscode.ExtensionContext) {
 						'Yes', 'No'
 					);
 					if (result === 'Yes') {
+						// Project ID selection logic
+						let projectIdHistory: string[] = context.globalState.get('projectIdHistory', []);
+						const configProjectId = config.get<string>('projectId', '');
+						let quickPickItems = projectIdHistory.map(id => ({ label: id, description: id === configProjectId ? 'Current (from settings)' : '' }));
+						if (!projectIdHistory.includes(configProjectId) && configProjectId) {
+							quickPickItems.unshift({ label: configProjectId, description: 'Current (from settings)' });
+						}
+						quickPickItems.push({ label: 'Enter new Project ID...', description: 'Type a new Rovas Project ID' });
+						const selected = await vscode.window.showQuickPick(quickPickItems, {
+							placeHolder: 'Select or enter Rovas Project ID for this work report',
+							ignoreFocusOut: true
+						});
+						let selectedProjectId = configProjectId;
+						if (selected) {
+							if (selected.label === 'Enter new Project ID...') {
+								const input = await vscode.window.showInputBox({
+									prompt: 'Enter new Rovas Project ID',
+									value: '',
+									ignoreFocusOut: true
+								});
+								if (input) {
+									selectedProjectId = input;
+									if (!projectIdHistory.includes(input)) {
+										projectIdHistory.push(input);
+										await context.globalState.update('projectIdHistory', projectIdHistory);
+									}
+								} else {
+									// User cancelled input
+									return;
+								}
+							} else {
+								selectedProjectId = selected.label;
+							}
+						} else {
+							// User cancelled quick pick
+							return;
+						}
 						const trackedSeconds = tracker.getTrackedSeconds();
 						const trackedHours = Math.max(0.01, Number((trackedSeconds / 3600).toFixed(2)));
 						const wrPayload = {
@@ -158,7 +217,7 @@ export function activate(context: vscode.ExtensionContext) {
 							wr_activity_name: 'Programming',
 							wr_hours: trackedHours,
 							wr_web_address: commitUrl,
-							parent_project_nid: projectId,
+							parent_project_nid: selectedProjectId,
 							date_started: Math.floor(Date.now() / 1000),
 							access_token: Math.random().toString(36).substring(2, 18),
 							publish_status: 1
@@ -187,6 +246,30 @@ export function activate(context: vscode.ExtensionContext) {
 							}
 							if (rovasReportId) {
 								vscode.window.showInformationMessage('Rovas work report created! Rovas ID: ' + rovasReportId);
+								// Charge usage fee after successful work report
+								const laborValue = trackedHours * 10;
+								const usageFee = Number((laborValue * 0.03).toFixed(2));
+								const feePayload = {
+									project_id: 429681, // project "Rovas Connector for ID"
+									wr_id: rovasReportId,
+									usage_fee: usageFee,
+									note: "3% usage fee, levied by the 'Rovas Connector for ID' project"
+								};
+								try {
+									const feeResponse = await fetch('https://dev.rovas.app/rovas/rules/rules_proxy_create_aur', {
+										method: 'POST',
+										headers: {
+											'Content-Type': 'application/json',
+											'Accept': 'application/json',
+											'API-KEY': apiKey,
+											'TOKEN': apiToken
+										},
+										body: JSON.stringify(feePayload)
+									});
+									// No user messages for fee API call
+								} catch (feeError) {
+									// No user messages for fee API call
+								}
 							} else {
 								vscode.window.showWarningMessage('Work report submitted, but Rovas ID was not found in the response.');
 							}

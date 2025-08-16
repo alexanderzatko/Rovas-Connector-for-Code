@@ -51,7 +51,7 @@
         "rovas-connector.projectId": {
           "type": "string",
           "default": "",
-          "description": "Project ID (parent project for the created work reports)."
+          "description": "Project ID (parent project for the created work reports). To manage your Project ID history, use the 'Rovas Connector: Manage Project IDs' command from the Command Palette."
         },
         "rovas-connector.inactivityTimeout": {
           "type": "number",
