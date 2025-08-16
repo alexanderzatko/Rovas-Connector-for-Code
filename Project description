@@ -1,0 +1,86 @@
+Project Overview
+This project implements functionality similar to a plugin for JOSM (Java OpenStreetMap Editor) that enables time tracking and Rovas reporting for contributors. It integrates with the Rovas platform (https://rovas.app) to track editing time, manage user credentials, and report work for recognition and reward.
+
+Main Features
+Time Tracking
+
+Tracks active editing time in JOSM.
+Handles inactivity tolerance (configurable).
+Allows manual timer reset.
+Persists tracked time and user preferences.
+Rovas Reporting
+
+Connects to Rovas API for reporting work.
+Supports creating work reports and AUR (Activity Unit Reports).
+Manages user credentials and project selection.
+Handles shareholder status and reporting eligibility.
+User Interface
+
+Dialogs for entering credentials, configuring preferences, and submitting reports.
+GUI panels for time tracking status and reporting actions.
+Validation for user input fields.
+
+Key Components
+1. Plugin Entry Point
+RovasPlugin.java: Main class, initializes the plugin, sets up listeners, and manages core objects.
+Instantiates TimeTrackingManager and RovasPreference.
+Registers listeners for data changes to track editing time.
+2. Time Tracking
+TimeTrackingManager.java: Core logic for tracking time, managing listeners, and storing tracked seconds.
+AnyOsmDataChangeTracker.java: Listens to JOSM layer changes and updates time tracking.
+ResetTimerAction.java: Action to manually reset the timer, with a GUI panel for user input.
+3. Rovas API Integration
+ApiQuery.java: Abstract base for API queries.
+ApiCheckOrAddShareholder.java, ApiCreateAur.java, ApiCreateWorkReport.java: Concrete API calls for Rovas operations.
+api/ApiCredentials.java: Stores API credentials.
+ApiException.java: Error handling for API calls.
+UrlProvider.java: Centralizes Rovas API endpoint URLs.
+4. Model & Preferences
+RovasProperties.java: Stores plugin properties (API key, token, project ID, inactivity tolerance, etc.).
+model/RovasPreference.java: Manages user preferences.
+model/StaticConfig.java: Static configuration values.
+5. GUI
+gui/RovasConnectorDialog.java, CreateRovasReportDialog.java: Main dialogs for reporting and configuration.
+RovasPreferencePanel.java: Preferences panel for user settings.
+gui/ApiCredentialsPanel.java: Panel for entering API credentials.
+NonBlankTextFieldValidator.java: Input validation.
+6. Utilities
+GBCUtil.java: GUI layout helpers.
+util/TimeConverterUtil.java: Time conversion utilities.
+NullableProperty.java: Property wrapper for optional values.
+How to Translate to a VS Code Extension
+To create a VS Code extension with similar functionality:
+
+Time Tracking
+
+Use VS Code APIs to listen for file edits, workspace activity, and inactivity.
+Store tracked time in extension storage.
+Provide commands to reset timer and configure inactivity tolerance.
+Rovas Reporting
+
+Implement commands and UI panels for entering credentials, selecting projects, and submitting reports.
+Use Node.js (or TypeScript) to call Rovas APIs (similar endpoints as in Java).
+Handle API errors and display messages to users.
+User Interface
+
+Use VS Code Webview panels for dialogs and configuration.
+Validate user input in forms.
+Show status bar items for time tracking status.
+Preferences & Storage
+
+Use VS Code's global and workspace state for storing preferences and credentials.
+Structure
+
+Organize code into modules: time tracking, API, model, GUI, and utilities.
+Provide clear documentation and comments for maintainability.
+Suggested VS Code Extension Structure
+src/extension.ts: Main entry point, registers commands and listeners.
+src/timeTracking/: Time tracking logic and state.
+src/rovasApi/: Rovas API integration.
+src/model/: Data models and preferences.
+src/gui/: Webview panels and input validation.
+src/util/: Utility functions.
+Additional Notes
+The original plugin is Java-based and tightly integrated with JOSM. For VS Code, use TypeScript/JavaScript and VS Code APIs.
+Rovas API endpoints and authentication logic can be reused/adapted.
+Focus on extensibility and user experience in the VS Code environment.

@@ -1,0 +1,100 @@
+{
+  "name": "rovas-connector",
+  "displayName": "Rovas Connector",
+  "description": "VS Code extension modeled on the functionality of an existing JOSM plugin for Rovas Connector.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rovas-connector.startTimer",
+        "title": "Rovas Connector: Start Timer"
+      },
+      {
+        "command": "rovas-connector.stopTimer",
+        "title": "Rovas Connector: Stop Timer"
+      },
+      {
+        "command": "rovas-connector.resetTimer",
+        "title": "Rovas Connector: Reset Timer"
+      },
+      {
+        "command": "rovas-connector.showTrackedTime",
+        "title": "Rovas Connector: Show Tracked Time"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Rovas Connector Preferences",
+      "properties": {
+        "rovas-connector.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for Rovas integration. Find this on your Rovas profile page: https://rovas.app/user",
+          "format": "password"
+        },
+        "rovas-connector.apiToken": {
+          "type": "string",
+          "default": "",
+          "description": "API token for Rovas integration. Find this on your Rovas profile page: https://rovas.app/user",
+          "format": "password"
+        },
+        "rovas-connector.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "Project ID (parent project for the created work reports)."
+        },
+        "rovas-connector.inactivityTimeout": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "Timer tolerance: lag in seconds after last edit to be counted as active time."
+        },
+        "rovas-connector.paidStatus": {
+          "type": "boolean",
+          "default": false,
+          "description": "I am not paid for my programming work by a company (only prompted to send a work report if this is confirmed)."
+          },
+          "rovas-connector.reportEvents": {
+            "type": "array",
+            "default": ["onCommit"],
+            "items": {
+              "type": "string",
+              "enum": [
+                "onCommit"
+              ]
+            },
+            "description": "Events that trigger the Rovas work report dialog. Currently only 'onCommit' is supported."
+          }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.102.0",
+    "@typescript-eslint/eslint-plugin": "^8.39.0",
+    "@typescript-eslint/parser": "^8.39.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.32.0",
+    "typescript": "^5.9.2"
+  }
+}

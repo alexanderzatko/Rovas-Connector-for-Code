@@ -1,0 +1,28 @@
+0 info it worked if it ends with ok
+1 verbose cli [
+1 verbose cli   '/usr/local/Cellar/node/24.5.0/bin/node',
+1 verbose cli   '/Users/sano/.node/bin/npm',
+1 verbose cli   'install'
+1 verbose cli ]
+2 info using npm@3.5.1
+3 info using node@v24.5.0
+4 verbose stack ReferenceError: primordials is not defined
+4 verbose stack     at evalmachine.<anonymous>:47:5
+4 verbose stack     at Object.<anonymous> (/Users/sano/.node/lib/node_modules/npm/node_modules/cmd-shim/node_modules/graceful-fs/fs.js:11:1)
+4 verbose stack     at Module._compile (node:internal/modules/cjs/loader:1738:14)
+4 verbose stack     at Object..js (node:internal/modules/cjs/loader:1871:10)
+4 verbose stack     at Module.load (node:internal/modules/cjs/loader:1470:32)
+4 verbose stack     at Module._load (node:internal/modules/cjs/loader:1290:12)
+4 verbose stack     at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+4 verbose stack     at wrapModuleLoad (node:internal/modules/cjs/loader:238:24)
+4 verbose stack     at Module.require (node:internal/modules/cjs/loader:1493:12)
+4 verbose stack     at require (node:internal/modules/helpers:152:16)
+5 verbose cwd /Users/sano/Documents/homeProjects/Rovas Connector for Code
+6 error Darwin 24.6.0
+7 error argv "/usr/local/Cellar/node/24.5.0/bin/node" "/Users/sano/.node/bin/npm" "install"
+8 error node v24.5.0
+9 error npm  v3.5.1
+10 error primordials is not defined
+11 error If you need help, you may report this error at:
+11 error     <https://github.com/npm/npm/issues>
+12 verbose exit [ 1, true ]
