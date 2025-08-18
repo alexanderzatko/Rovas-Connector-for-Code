@@ -1,7 +1,7 @@
 {
   "name": "rovas-connector",
   "displayName": "Rovas Connector",
-  "description": "VS Code extension modeled on the functionality of an existing JOSM plugin for Rovas Connector.",
+  "description": "VS Code extension for reporting programming time to Rovas.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.103.0"
@@ -30,24 +30,20 @@
       {
         "command": "rovas-connector.showTrackedTime",
         "title": "Rovas Connector: Show Tracked Time"
+      },
+      {
+        "command": "rovas-connector.setApiKey",
+        "title": "Rovas Connector: Set API Key"
+      },
+      {
+        "command": "rovas-connector.setApiToken",
+        "title": "Rovas Connector: Set API Token"
       }
     ],
     "configuration": {
       "type": "object",
       "title": "Rovas Connector Preferences",
       "properties": {
-        "rovas-connector.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API key for Rovas integration. Find this on your Rovas profile page: https://rovas.app/user",
-          "format": "password"
-        },
-        "rovas-connector.apiToken": {
-          "type": "string",
-          "default": "",
-          "description": "API token for Rovas integration. Find this on your Rovas profile page: https://rovas.app/user",
-          "format": "password"
-        },
         "rovas-connector.projectId": {
           "type": "string",
           "default": "",
@@ -63,18 +59,23 @@
           "type": "boolean",
           "default": false,
           "description": "I am not paid for my programming work by a company (only prompted to send a work report if this is confirmed)."
+        },
+        "rovas-connector.usageFeeInfo": {
+          "type": "null",
+          "description": "Usage fee: The plugin charges a 3% fee on every report sent. This fee will be subtracted from the Chron earnings you receive for the time reported in your work reports. The fee Chrons are immediately converted to Merits and assigned to the Rovas Connector for Code project.",
+          "default": null
+        },
+        "rovas-connector.reportEvents": {
+          "type": "array",
+          "default": ["onCommit"],
+          "items": {
+            "type": "string",
+            "enum": [
+              "onCommit"
+            ]
           },
-          "rovas-connector.reportEvents": {
-            "type": "array",
-            "default": ["onCommit"],
-            "items": {
-              "type": "string",
-              "enum": [
-                "onCommit"
-              ]
-            },
-            "description": "Events that trigger the Rovas work report dialog. Currently only 'onCommit' is supported."
-          }
+          "description": "Events that trigger the Rovas work report dialog. Currently only 'onCommit' is supported."
+        }
       }
     }
   },

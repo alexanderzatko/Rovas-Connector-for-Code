@@ -8,6 +8,33 @@ import { exec } from 'child_process';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
+	// Command to set API Key
+	const setApiKeyDisposable = vscode.commands.registerCommand('rovas-connector.setApiKey', async () => {
+		const input = await vscode.window.showInputBox({
+			prompt: 'Enter your Rovas API Key',
+			password: true,
+			ignoreFocusOut: true
+		});
+		if (input) {
+			await context.secrets.store('rovas-connector.apiKey', input);
+			vscode.window.showInformationMessage('Rovas API Key saved securely.');
+		}
+	});
+	context.subscriptions.push(setApiKeyDisposable);
+
+	// Command to set API Token
+	const setApiTokenDisposable = vscode.commands.registerCommand('rovas-connector.setApiToken', async () => {
+		const input = await vscode.window.showInputBox({
+			prompt: 'Enter your Rovas API Token',
+			password: true,
+			ignoreFocusOut: true
+		});
+		if (input) {
+			await context.secrets.store('rovas-connector.apiToken', input);
+			vscode.window.showInformationMessage('Rovas API Token saved securely.');
+		}
+	});
+	context.subscriptions.push(setApiTokenDisposable);
 	// Read inactivity timeout from configuration
 	const config = vscode.workspace.getConfiguration('rovas-connector');
 	const inactivityTimeout = config.get<number>('inactivityTimeout', 30);
@@ -92,7 +119,11 @@ export function activate(context: vscode.ExtensionContext) {
 		const seconds = tracker.getTrackedSeconds();
 		const minutes = Math.floor(seconds / 60);
 		const remainingSeconds = seconds % 60;
-		vscode.window.showInformationMessage(`Tracked time: ${minutes}m ${remainingSeconds}s`);
+		const trackedMsgPromise = vscode.window.showInformationMessage(`Tracked time: ${minutes}m ${remainingSeconds}s`);
+		setTimeout(() => {
+			trackedMsgPromise.then(() => {});
+			vscode.commands.executeCommand('workbench.action.closeMessages');
+		}, 3000);
 	});
 	context.subscriptions.push(showTimeDisposable);
 
@@ -105,7 +136,11 @@ export function activate(context: vscode.ExtensionContext) {
 	// Reset timer command
 	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', () => {
 		tracker.reset();
-		vscode.window.showInformationMessage('Time tracker reset.');
+		const resetMsgPromise = vscode.window.showInformationMessage('Time tracker reset.');
+		setTimeout(() => {
+			resetMsgPromise.then(() => {});
+			vscode.commands.executeCommand('workbench.action.closeMessages');
+		}, 3000);
 	});
 	context.subscriptions.push(resetDisposable);
 
@@ -113,7 +148,11 @@ export function activate(context: vscode.ExtensionContext) {
 	const manageProjectIdsDisposable = vscode.commands.registerCommand('rovas-connector.manageProjectIds', async () => {
 		let projectIdHistory: string[] = context.globalState.get('projectIdHistory', []);
 		if (projectIdHistory.length === 0) {
-			vscode.window.showInformationMessage('No Project IDs to manage.');
+			const noProjectMsgPromise = vscode.window.showInformationMessage('No Project IDs to manage.');
+			setTimeout(() => {
+				noProjectMsgPromise.then(() => {});
+				vscode.commands.executeCommand('workbench.action.closeMessages');
+			}, 3000);
 			return;
 		}
 		const items = projectIdHistory.map(id => ({ label: id, description: 'Remove this Project ID' }));
@@ -126,11 +165,14 @@ export function activate(context: vscode.ExtensionContext) {
 			const idsToRemove = selected.map(item => item.label);
 			projectIdHistory = projectIdHistory.filter(id => !idsToRemove.includes(id));
 			await context.globalState.update('projectIdHistory', projectIdHistory);
-			vscode.window.showInformationMessage('Selected Project IDs removed from history.');
+			const removedMsgPromise = vscode.window.showInformationMessage('Selected Project IDs removed from history.');
+			setTimeout(() => {
+				removedMsgPromise.then(() => {});
+				vscode.commands.executeCommand('workbench.action.closeMessages');
+			}, 3000);
 		}
 	});
 	context.subscriptions.push(manageProjectIdsDisposable);
-
 	// Listen for git commit events using polling for HEAD changes
 	const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
 	if (gitExtension) {
@@ -147,8 +189,8 @@ export function activate(context: vscode.ExtensionContext) {
 					lastHead = newHead;
 					// Get settings
 					const config = vscode.workspace.getConfiguration('rovas-connector');
-					const apiKey = config.get<string>('apiKey', '');
-					const apiToken = config.get<string>('apiToken', '');
+					const apiKey = await context.secrets.get('rovas-connector.apiKey');
+					const apiToken = await context.secrets.get('rovas-connector.apiToken');
 					const projectId = config.get<string>('projectId', '');
 					const paidStatus = config.get<boolean>('paidStatus', false);
 					if (!apiKey || !apiToken || !projectId || !paidStatus) {
@@ -168,7 +210,7 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 					}
 					const result = await vscode.window.showInformationMessage(
-						`Do you want to create a Rovas work report for commit ${newHead}?`,
+						`Do you want to create a Rovas work report for commit ${newHead}?\n\nYou will be prompted to choose or enter the Project ID in the next step.`,
 						'Yes', 'No'
 					);
 					if (result === 'Yes') {
@@ -211,10 +253,11 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 						const trackedSeconds = tracker.getTrackedSeconds();
 						const trackedHours = Math.max(0.01, Number((trackedSeconds / 3600).toFixed(2)));
+						const workspaceName = vscode.workspace.name || 'VS Code workspace';
 						const wrPayload = {
 							wr_classification: 1645,
 							wr_description: `VS Code commit: ${newHead}. Proof: ${commitUrl}`,
-							wr_activity_name: 'Programming',
+							wr_activity_name: `Programming work on "${workspaceName}"`,
 							wr_hours: trackedHours,
 							wr_web_address: commitUrl,
 							parent_project_nid: selectedProjectId,
@@ -223,7 +266,7 @@ export function activate(context: vscode.ExtensionContext) {
 							publish_status: 1
 						};
 						try {
-							const response = await fetch('https://dev.rovas.app/rovas/rules/rules_proxy_create_work_report', {
+							const response = await fetch('https://rovas.app/rovas/rules/rules_proxy_create_work_report', {
 								method: 'POST',
 								headers: {
 									'Content-Type': 'application/json',
@@ -245,18 +288,23 @@ export function activate(context: vscode.ExtensionContext) {
 								console.warn('[ROVAS] Failed to parse JSON response:', e, textResponse);
 							}
 							if (rovasReportId) {
-								vscode.window.showInformationMessage('Rovas work report created! Rovas ID: ' + rovasReportId);
+								const reportMsgPromise = vscode.window.showInformationMessage('Rovas work report created! Rovas ID: ' + rovasReportId);
+								setTimeout(() => {
+									reportMsgPromise.then(() => {});
+									vscode.commands.executeCommand('workbench.action.closeMessages');
+								}, 3000);
+								tracker.reset();
 								// Charge usage fee after successful work report
 								const laborValue = trackedHours * 10;
 								const usageFee = Number((laborValue * 0.03).toFixed(2));
 								const feePayload = {
-									project_id: 429681, // project "Rovas Connector for ID"
+									project_id: 437627, // project "Rovas Connector for Code"
 									wr_id: rovasReportId,
 									usage_fee: usageFee,
 									note: "3% usage fee, levied by the 'Rovas Connector for ID' project"
 								};
 								try {
-									const feeResponse = await fetch('https://dev.rovas.app/rovas/rules/rules_proxy_create_aur', {
+									const feeResponse = await fetch('https://rovas.app/rovas/rules/rules_proxy_create_aur', {
 										method: 'POST',
 										headers: {
 											'Content-Type': 'application/json',
@@ -271,11 +319,19 @@ export function activate(context: vscode.ExtensionContext) {
 									// No user messages for fee API call
 								}
 							} else {
-								vscode.window.showWarningMessage('Work report submitted, but Rovas ID was not found in the response.');
+								const warnMsgPromise = vscode.window.showWarningMessage('Work report submitted, but Rovas ID was not found in the response.');
+								setTimeout(() => {
+									warnMsgPromise.then(() => {});
+									vscode.commands.executeCommand('workbench.action.closeMessages');
+								}, 3000);
 							}
 						} catch (error) {
 							const errorMsg = (typeof error === 'object' && error !== null && 'message' in error) ? (error as any).message : String(error);
-							vscode.window.showErrorMessage('Error creating Rovas work report: ' + errorMsg);
+							const errorMsgPromise = vscode.window.showErrorMessage('Error creating Rovas work report: ' + errorMsg);
+							setTimeout(() => {
+								errorMsgPromise.then(() => {});
+								vscode.commands.executeCommand('workbench.action.closeMessages');
+							}, 3000);
 						}
 					}
 				}

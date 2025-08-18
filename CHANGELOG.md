@@ -1,9 +1,8 @@
-# Change Log
-
-All notable changes to the "rovas-connector" extension will be documented in this file.
-
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+# Changelog
 
 ## [Unreleased]
-
-- Initial release
+- Initial release: Track programming time, manage Project IDs, securely store API credentials, auto-close dialogs, and report work to Rovas.
+- Added status bar controls for time adjustment and reset.
+- Automatic work report creation on git commit.
+- Usage fee calculation and reporting.
+- Improved dialog scoping and error handling.

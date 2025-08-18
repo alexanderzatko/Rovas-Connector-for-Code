@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 export class TimeTracker {
   private trackedSeconds: number = 0;
   private lastActivity: number = Date.now();
-  private inactivityTolerance: number = 30; // seconds, configurable
+  private inactivityTolerance: number = 60; // seconds, configurable
   private timer: NodeJS.Timeout | undefined;
 
   constructor(private context: vscode.ExtensionContext) {}
@@ -40,12 +40,14 @@ export class TimeTracker {
   }
 
   private registerListeners() {
-    vscode.workspace.onDidChangeTextDocument(() => this.recordActivity());
-    vscode.window.onDidChangeActiveTextEditor(() => this.recordActivity());
-    vscode.window.onDidChangeWindowState(() => this.recordActivity());
-    vscode.window.onDidChangeVisibleTextEditors(() => this.recordActivity());
-    vscode.window.onDidChangeActiveTerminal?.(() => this.recordActivity());
-    // Add more events as needed for broader activity coverage
+  vscode.workspace.onDidChangeTextDocument(() => this.recordActivity());
+  vscode.window.onDidChangeActiveTextEditor(() => this.recordActivity());
+  vscode.window.onDidChangeWindowState(() => this.recordActivity());
+  vscode.window.onDidChangeVisibleTextEditors(() => this.recordActivity());
+  vscode.window.onDidChangeActiveTerminal?.(() => this.recordActivity());
+  vscode.window.onDidChangeTextEditorSelection?.(() => this.recordActivity());
+  vscode.window.onDidChangeVisibleNotebookEditors?.(() => this.recordActivity());
+  // Add more events as needed for broader activity coverage
   }
 
   private recordActivity() {
@@ -54,7 +56,9 @@ export class TimeTracker {
 
   private checkActivity() {
     const now = Date.now();
-    if ((now - this.lastActivity) / 1000 < this.inactivityTolerance) {
+    const windowState = vscode.window.state;
+    // Count time whenever VS Code is focused, regardless of activity
+    if (windowState.focused) {
       this.trackedSeconds++;
       this.saveState();
     }
