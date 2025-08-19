@@ -1,6 +1,6 @@
 # Rovas Connector for Code
 
-A Visual Studio Code extension for tracking programming time and reporting work to the Rovas platform.
+A Visual Studio Code extension for tracking programming time and reporting work to the [Rovas application](https://rovas.app).
 
 ## Features
 - Securely store Rovas API credentials using VS Code SecretStorage
