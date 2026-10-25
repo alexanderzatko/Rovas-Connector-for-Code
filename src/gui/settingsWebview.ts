@@ -353,7 +353,7 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 				<div class="field">
 					<label for="inactivityTimeout">Inactivity timeout (seconds)</label>
 					<input type="number" id="inactivityTimeout" min="5" value="${settings.inactivityTimeout}" />
-					<span class="hint">Seconds after the last edit before tracking pauses. Minimum 5.</span>
+					<span class="hint">Seconds after the last activity before tracking pauses. Activity = typing, clicking/selecting, scrolling, or switching editors — not mouse movement alone. Tracking also pauses when Cursor is in the background. Minimum 5.</span>
 				</div>
 			</section>
 

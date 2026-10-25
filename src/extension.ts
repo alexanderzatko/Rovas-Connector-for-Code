@@ -98,37 +98,29 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	// Status bar item for tracked time
+	// Status bar item for tracked time (driven by the tracker tick — same state used for counting)
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 	statusBarItem.text = 'Rovas: 0m 0s';
 	statusBarItem.show();
 	context.subscriptions.push(statusBarItem);
 
-	let wasInactive = false;
-	setInterval(() => {
-		const seconds = tracker.getTrackedSeconds();
+	context.subscriptions.push(tracker.onTick(({ seconds, state }) => {
 		const minutes = Math.floor(seconds / 60);
 		const remainingSeconds = seconds % 60;
-		const now = Date.now();
-		const inactive = (now - (tracker as any).lastActivity) / 1000 >= (tracker as any).inactivityTolerance;
 
-		// LED-like dot and state
-		let dot = '●';
-		let stateText = '';
-		let color = '';
-		if (inactive) {
-			stateText = 'paused';
+		let stateText = 'timing';
+		let color = '#00FF00'; // green
+		if (state === 'paused-unfocused') {
+			stateText = 'paused · background';
 			color = '#FFA500'; // orange
-		} else {
-			stateText = 'timing';
-			color = '#00FF00'; // green
+		} else if (state === 'paused-inactive') {
+			stateText = 'paused · idle';
+			color = '#FFA500'; // orange
 		}
+
 		statusBarItem.text = `$(primitive-dot) Rovas: ${minutes}m ${remainingSeconds}s (${stateText})`;
 		statusBarItem.color = color;
-
-	// No dialog when resuming; status bar is enough
-		wasInactive = inactive;
-	}, 1000);
+	}));
 
 	// Show tracked time command
 	const showTimeDisposable = vscode.commands.registerCommand('rovas-connector.showTrackedTime', () => {
