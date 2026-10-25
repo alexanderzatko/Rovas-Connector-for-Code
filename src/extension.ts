@@ -3,6 +3,7 @@
 import * as vscode from 'vscode';
 import { TimeTracker } from './timeTracking/timeTracker';
 import { showAdjustTimeWebview } from './gui/adjustTimeWebview';
+import { showSettingsWebview } from './gui/settingsWebview';
 import { exec } from 'child_process';
 
 // This method is called when your extension is activated
@@ -44,6 +45,14 @@ export function activate(context: vscode.ExtensionContext) {
 	tracker.setInactivityTolerance(inactivityTimeout);
 	tracker.start();
 
+	// Status bar button: Settings
+	const settingsButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
+	settingsButton.text = '$(gear) Rovas Settings';
+	settingsButton.command = 'rovas-connector.openSettings';
+	settingsButton.tooltip = 'Open Rovas Connector settings';
+	settingsButton.show();
+	context.subscriptions.push(settingsButton);
+
 	// Status bar button: Adjust time
 	const adjustTimeButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
 	adjustTimeButton.text = '$(edit) Adjust Time';
@@ -59,6 +68,13 @@ export function activate(context: vscode.ExtensionContext) {
 	resetTimeButton.tooltip = 'Reset tracked time';
 	resetTimeButton.show();
 	context.subscriptions.push(resetTimeButton);
+
+	// Settings GUI command
+	const openSettingsDisposable = vscode.commands.registerCommand('rovas-connector.openSettings', async () => {
+		await showSettingsWebview(context);
+	});
+	context.subscriptions.push(openSettingsDisposable);
+
 	// Adjust tracked time command (hours, minutes, seconds)
 	const adjustTimeDisposable = vscode.commands.registerCommand('rovas-connector.adjustTrackedTime', async () => {
 		showAdjustTimeWebview(context, tracker);

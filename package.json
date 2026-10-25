@@ -16,6 +16,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "rovas-connector.openSettings",
+        "title": "Rovas Connector: Open Settings"
+      },
+      {
         "command": "rovas-connector.startTimer",
         "title": "Rovas Connector: Start Timer"
       },
@@ -38,6 +42,14 @@
       {
         "command": "rovas-connector.setApiToken",
         "title": "Rovas Connector: Set API Token"
+      },
+      {
+        "command": "rovas-connector.adjustTrackedTime",
+        "title": "Rovas Connector: Adjust Tracked Time"
+      },
+      {
+        "command": "rovas-connector.manageProjectIds",
+        "title": "Rovas Connector: Manage Project IDs"
       }
     ],
     "configuration": {
