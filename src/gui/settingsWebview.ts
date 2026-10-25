@@ -2,6 +2,7 @@
 // User-friendly settings panel for Rovas Connector
 
 import * as vscode from 'vscode';
+import { smokeTestConnection } from '../rovasApi/client';
 
 interface SettingsSnapshot {
 	hasApiKey: boolean;
@@ -54,6 +55,9 @@ export async function showSettingsWebview(context: vscode.ExtensionContext) {
 				case 'removeProjectId':
 					await removeProjectIdFromHistory(context, message.projectId);
 					await refreshPanel(context, panel);
+					break;
+				case 'testConnection':
+					await runSmokeTest(context, panel, message);
 					break;
 				case 'cancel':
 					panel.dispose();
@@ -127,6 +131,39 @@ async function removeProjectIdFromHistory(context: vscode.ExtensionContext, proj
 		'projectIdHistory',
 		history.filter((id) => id !== projectId)
 	);
+}
+
+async function runSmokeTest(
+	context: vscode.ExtensionContext,
+	panel: vscode.WebviewPanel,
+	message: { apiKey?: string; apiToken?: string; projectId?: string }
+) {
+	panel.webview.postMessage({ command: 'testResult', pending: true });
+
+	const storedKey = await context.secrets.get('rovas-connector.apiKey');
+	const storedToken = await context.secrets.get('rovas-connector.apiToken');
+	const apiKey = (message.apiKey || '').trim() || storedKey || '';
+	const apiToken = (message.apiToken || '').trim() || storedToken || '';
+	const projectId = (message.projectId || '').trim();
+
+	const result = await smokeTestConnection(apiKey, apiToken, projectId);
+	if (result.ok) {
+		panel.webview.postMessage({
+			command: 'testResult',
+			ok: true,
+			message: `Connected. Project #${result.nid}: “${result.title}”`
+		});
+		vscode.window.showInformationMessage(
+			`Rovas OK — project “${result.title}” (#${result.nid})`
+		);
+	} else {
+		panel.webview.postMessage({
+			command: 'testResult',
+			ok: false,
+			message: result.message
+		});
+		vscode.window.showErrorMessage(`Rovas connection test failed: ${result.message}`);
+	}
 }
 
 function getWebviewContent(settings: SettingsSnapshot): string {
@@ -301,6 +338,25 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 			color: var(--vscode-descriptionForeground);
 			font-size: 0.9em;
 		}
+		.test-result {
+			margin-top: 10px;
+			padding: 10px 12px;
+			border-radius: 2px;
+			display: none;
+		}
+		.test-result.visible { display: block; }
+		.test-result.ok {
+			background: color-mix(in srgb, #3fb950 18%, transparent);
+			border-left: 3px solid #3fb950;
+		}
+		.test-result.err {
+			background: color-mix(in srgb, #f85149 18%, transparent);
+			border-left: 3px solid #f85149;
+		}
+		.test-result.pending {
+			background: var(--vscode-textBlockQuote-background, rgba(127,127,127,0.12));
+			border-left: 3px solid var(--vscode-descriptionForeground);
+		}
 	</style>
 </head>
 <body>
@@ -341,6 +397,11 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 					<label for="projectId">Default Project ID</label>
 					<input type="text" id="projectId" value="${escapeHtml(settings.projectId)}" placeholder="Rovas parent project ID" />
 					<span class="hint">Used as the default when creating work reports after a commit.</span>
+				</div>
+				<div class="field">
+					<button type="button" class="secondary" id="testConnectionBtn">Test connection</button>
+					<span class="hint">Checks API Key / Token and loads the project title for the ID above (GET /rovas/node/{nid}).</span>
+					<div id="testResult" class="test-result" role="status"></div>
 				</div>
 				<div class="field">
 					<label>Saved Project IDs</label>
@@ -411,6 +472,33 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 			btn.addEventListener('click', () => {
 				vscode.postMessage({ command: 'removeProjectId', projectId: btn.getAttribute('data-remove') });
 			});
+		});
+
+		const testBtn = document.getElementById('testConnectionBtn');
+		const testResult = document.getElementById('testResult');
+		testBtn.addEventListener('click', () => {
+			testBtn.disabled = true;
+			vscode.postMessage({
+				command: 'testConnection',
+				apiKey: document.getElementById('apiKey').value,
+				apiToken: document.getElementById('apiToken').value,
+				projectId: document.getElementById('projectId').value
+			});
+		});
+
+		window.addEventListener('message', (event) => {
+			const msg = event.data;
+			if (!msg || msg.command !== 'testResult') { return; }
+			testResult.classList.add('visible');
+			testResult.classList.remove('ok', 'err', 'pending');
+			if (msg.pending) {
+				testResult.classList.add('pending');
+				testResult.textContent = 'Testing connection…';
+				return;
+			}
+			testBtn.disabled = false;
+			testResult.classList.add(msg.ok ? 'ok' : 'err');
+			testResult.textContent = msg.message || (msg.ok ? 'OK' : 'Failed');
 		});
 	</script>
 </body>
