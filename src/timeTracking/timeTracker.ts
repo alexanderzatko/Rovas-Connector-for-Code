@@ -1,5 +1,5 @@
 // timeTracker.ts
-// Core logic for tracking active editing time in VS Code
+// Core logic for tracking active editing time in VS Code / Cursor
 
 import * as vscode from 'vscode';
 
@@ -10,10 +10,11 @@ export type TickListener = (info: { seconds: number; state: TrackingState }) => 
 export class TimeTracker {
   private trackedSeconds: number = 0;
   private lastActivity: number = Date.now();
-  private inactivityTolerance: number = 60; // seconds, configurable
+  private inactivityTolerance: number = 30; // seconds; used only if pauseWhenIdle
+  private pauseWhenIdle: boolean = false;
   private timer: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
-  /** Last state decided by the 1s tick — single source of truth for UI + counting */
+  /** Last state decided by the tick — single source of truth for UI + counting */
   private currentState: TrackingState = 'timing';
   private tickListeners: TickListener[] = [];
 
@@ -27,15 +28,15 @@ export class TimeTracker {
   public async setTrackedSeconds(seconds: number) {
     this.trackedSeconds = seconds;
     await this.saveState();
-    this.emitTick();
+    // Setting time is an intentional user action — resume timing immediately
+    this.bumpActivity();
   }
 
   public start() {
     this.loadState().then(() => {
-      this.currentState = this.computeTrackingState();
+      this.bumpActivity();
       this.timer = setInterval(() => this.tick(), 1000);
       this.registerListeners();
-      this.emitTick();
     });
   }
 
@@ -51,12 +52,20 @@ export class TimeTracker {
   public reset() {
     this.trackedSeconds = 0;
     this.saveState();
-    this.emitTick();
+    this.bumpActivity();
+  }
+
+  /** Mark user activity and refresh status (does not add a second by itself). */
+  public bumpActivity() {
+    this.lastActivity = Date.now();
+    this.refreshState(false);
   }
 
   /** Status bar (and others) should subscribe here instead of using a separate interval. */
   public onTick(listener: TickListener): vscode.Disposable {
     this.tickListeners.push(listener);
+    // Push current snapshot immediately so UI is correct without waiting 1s
+    listener({ seconds: this.trackedSeconds, state: this.currentState });
     return {
       dispose: () => {
         this.tickListeners = this.tickListeners.filter((l) => l !== listener);
@@ -66,37 +75,26 @@ export class TimeTracker {
 
   private registerListeners() {
     this.disposables.push(
-      vscode.workspace.onDidChangeTextDocument(() => this.recordActivity()),
-      vscode.window.onDidChangeActiveTextEditor(() => this.recordActivity()),
-      vscode.window.onDidChangeVisibleTextEditors(() => this.recordActivity()),
-      vscode.window.onDidChangeTextEditorSelection(() => this.recordActivity()),
-      // Scrolling / revealing code counts as activity (mouse move alone does not — no VS Code API for it)
-      vscode.window.onDidChangeTextEditorVisibleRanges(() => this.recordActivity()),
+      vscode.workspace.onDidChangeTextDocument(() => this.bumpActivity()),
+      vscode.window.onDidChangeActiveTextEditor(() => this.bumpActivity()),
+      vscode.window.onDidChangeVisibleTextEditors(() => this.bumpActivity()),
+      vscode.window.onDidChangeTextEditorSelection(() => this.bumpActivity()),
+      vscode.window.onDidChangeTextEditorVisibleRanges(() => this.bumpActivity()),
       vscode.window.onDidChangeWindowState((state) => {
         if (state.focused) {
-          this.recordActivity();
+          this.bumpActivity();
         } else {
-          // Pause UI immediately when the window goes to the background
           this.refreshState(false);
         }
       })
     );
 
     if (vscode.window.onDidChangeActiveTerminal) {
-      this.disposables.push(vscode.window.onDidChangeActiveTerminal(() => this.recordActivity()));
+      this.disposables.push(vscode.window.onDidChangeActiveTerminal(() => this.bumpActivity()));
     }
     if (vscode.window.onDidChangeVisibleNotebookEditors) {
-      this.disposables.push(vscode.window.onDidChangeVisibleNotebookEditors(() => this.recordActivity()));
+      this.disposables.push(vscode.window.onDidChangeVisibleNotebookEditors(() => this.bumpActivity()));
     }
-  }
-
-  private recordActivity() {
-    if (!vscode.window.state.focused) {
-      return;
-    }
-    this.lastActivity = Date.now();
-    // Update status immediately (e.g. click resumes) without adding an extra second
-    this.refreshState(false);
   }
 
   private tick() {
@@ -117,9 +115,13 @@ export class TimeTracker {
     if (!vscode.window.state.focused) {
       return 'paused-unfocused';
     }
-    const idleSeconds = (Date.now() - this.lastActivity) / 1000;
-    if (idleSeconds >= this.inactivityTolerance) {
-      return 'paused-inactive';
+    // Optional: pause after editor-idle. Off by default — Cursor Chat / Agent
+    // typing does not fire text-document events, so idle pause feels broken there.
+    if (this.pauseWhenIdle) {
+      const idleSeconds = (Date.now() - this.lastActivity) / 1000;
+      if (idleSeconds >= this.inactivityTolerance) {
+        return 'paused-inactive';
+      }
     }
     return 'timing';
   }
@@ -148,6 +150,11 @@ export class TimeTracker {
   }
 
   public setInactivityTolerance(seconds: number) {
-    this.inactivityTolerance = seconds;
+    this.inactivityTolerance = Math.max(5, seconds);
+  }
+
+  public setPauseWhenIdle(enabled: boolean) {
+    this.pauseWhenIdle = enabled;
+    this.refreshState(false);
   }
 }

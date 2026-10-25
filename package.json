@@ -61,11 +61,16 @@
           "default": "",
           "description": "Project ID (parent project for the created work reports). To manage your Project ID history, use the 'Rovas Connector: Manage Project IDs' command from the Command Palette."
         },
+        "rovas-connector.pauseWhenIdle": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pause the timer after a period with no editor activity (typing, selection, scroll). Off by default because Cursor Chat/Agent input is not detectable as editor activity. The timer still pauses when Cursor is in the background."
+        },
         "rovas-connector.inactivityTimeout": {
           "type": "number",
           "default": 30,
           "minimum": 5,
-          "description": "Timer tolerance: lag in seconds after last edit to be counted as active time."
+          "description": "When “Pause when idle” is enabled: seconds without editor activity before the timer pauses."
         },
         "rovas-connector.paidStatus": {
           "type": "boolean",

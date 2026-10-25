@@ -5,6 +5,7 @@ import { TimeTracker } from './timeTracking/timeTracker';
 import { showAdjustTimeWebview } from './gui/adjustTimeWebview';
 import { showSettingsWebview } from './gui/settingsWebview';
 import { registerCommitWorkReportPrompt } from './workReport/commitPrompt';
+import { formatProjectLabel, getSavedProjects, removeSavedProject } from './projects/projectStore';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -36,13 +37,15 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 	context.subscriptions.push(setApiTokenDisposable);
-	// Read inactivity timeout from configuration
+	// Read tracking preferences from configuration
 	const config = vscode.workspace.getConfiguration('rovas-connector');
 	const inactivityTimeout = config.get<number>('inactivityTimeout', 30);
+	const pauseWhenIdle = config.get<boolean>('pauseWhenIdle', false);
 
 	// Initialize time tracker
 	const tracker = new TimeTracker(context);
 	tracker.setInactivityTolerance(inactivityTimeout);
+	tracker.setPauseWhenIdle(pauseWhenIdle);
 	tracker.start();
 
 	// Status bar button: Settings
@@ -71,12 +74,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Settings GUI command
 	const openSettingsDisposable = vscode.commands.registerCommand('rovas-connector.openSettings', async () => {
+		tracker.bumpActivity();
 		await showSettingsWebview(context);
 	});
 	context.subscriptions.push(openSettingsDisposable);
 
 	// Adjust tracked time command (hours, minutes, seconds)
 	const adjustTimeDisposable = vscode.commands.registerCommand('rovas-connector.adjustTrackedTime', async () => {
+		tracker.bumpActivity();
 		showAdjustTimeWebview(context, tracker);
 	});
 	context.subscriptions.push(adjustTimeDisposable);
@@ -91,10 +96,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Listen for configuration changes
 	vscode.workspace.onDidChangeConfiguration(e => {
+		const cfg = vscode.workspace.getConfiguration('rovas-connector');
 		if (e.affectsConfiguration('rovas-connector.inactivityTimeout')) {
-			const newTimeout = vscode.workspace.getConfiguration('rovas-connector').get<number>('inactivityTimeout', 30);
+			const newTimeout = cfg.get<number>('inactivityTimeout', 30);
 			tracker.setInactivityTolerance(newTimeout);
-			vscode.window.showInformationMessage(`Rovas Connector inactivity timeout updated to ${newTimeout} seconds.`);
+		}
+		if (e.affectsConfiguration('rovas-connector.pauseWhenIdle')) {
+			tracker.setPauseWhenIdle(cfg.get<boolean>('pauseWhenIdle', false));
 		}
 	});
 
@@ -144,40 +152,32 @@ export function activate(context: vscode.ExtensionContext) {
 	// Reset timer command
 	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', () => {
 		tracker.reset();
-		const resetMsgPromise = vscode.window.showInformationMessage('Time tracker reset.');
-		setTimeout(() => {
-			resetMsgPromise.then(() => {});
-			vscode.commands.executeCommand('workbench.action.closeMessages');
-		}, 3000);
+		vscode.window.showInformationMessage('Time tracker reset.');
 	});
 	context.subscriptions.push(resetDisposable);
 
-	// Command to manage Project ID history
+	// Command to manage saved projects
 	const manageProjectIdsDisposable = vscode.commands.registerCommand('rovas-connector.manageProjectIds', async () => {
-		let projectIdHistory: string[] = context.globalState.get('projectIdHistory', []);
-		if (projectIdHistory.length === 0) {
-			const noProjectMsgPromise = vscode.window.showInformationMessage('No Project IDs to manage.');
-			setTimeout(() => {
-				noProjectMsgPromise.then(() => {});
-				vscode.commands.executeCommand('workbench.action.closeMessages');
-			}, 3000);
+		const saved = getSavedProjects(context);
+		if (saved.length === 0) {
+			vscode.window.showInformationMessage('No saved projects to manage.');
 			return;
 		}
-		const items = projectIdHistory.map(id => ({ label: id, description: 'Remove this Project ID' }));
+		const items = saved.map((project) => ({
+			label: formatProjectLabel(project),
+			description: 'Remove',
+			projectId: project.id
+		}));
 		const selected = await vscode.window.showQuickPick(items, {
-			placeHolder: 'Select Project ID to remove from history',
+			placeHolder: 'Select projects to remove',
 			canPickMany: true,
 			ignoreFocusOut: true
 		});
 		if (selected && selected.length > 0) {
-			const idsToRemove = selected.map(item => item.label);
-			projectIdHistory = projectIdHistory.filter(id => !idsToRemove.includes(id));
-			await context.globalState.update('projectIdHistory', projectIdHistory);
-			const removedMsgPromise = vscode.window.showInformationMessage('Selected Project IDs removed from history.');
-			setTimeout(() => {
-				removedMsgPromise.then(() => {});
-				vscode.commands.executeCommand('workbench.action.closeMessages');
-			}, 3000);
+			for (const item of selected) {
+				await removeSavedProject(context, item.projectId);
+			}
+			vscode.window.showInformationMessage('Selected projects removed.');
 		}
 	});
 	context.subscriptions.push(manageProjectIdsDisposable);

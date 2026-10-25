@@ -1,8 +1,10 @@
 // commitPrompt.ts
-// After a git commit, ask (modally) whether to create a Rovas work report
+// After a git commit, ask whether to create a Rovas work report
 
 import * as vscode from 'vscode';
 import { TimeTracker } from '../timeTracking/timeTracker';
+import { showWorkReportPrompt } from '../gui/workReportWebview';
+import { getSavedProjects } from '../projects/projectStore';
 
 type GitRepository = {
 	state: {
@@ -84,8 +86,9 @@ async function promptForWorkReport(
 	const config = vscode.workspace.getConfiguration('rovas-connector');
 	const apiKey = await context.secrets.get('rovas-connector.apiKey');
 	const apiToken = await context.secrets.get('rovas-connector.apiToken');
-	const projectId = config.get<string>('projectId', '');
+	const defaultProjectId = config.get<string>('projectId', '');
 	const paidStatus = config.get<boolean>('paidStatus', false);
+	const savedProjects = getSavedProjects(context);
 
 	const shortHash = commitHash.slice(0, 7);
 	const trackedSeconds = tracker.getTrackedSeconds();
@@ -102,7 +105,7 @@ async function promptForWorkReport(
 	const missing: string[] = [];
 	if (!apiKey) { missing.push('API Key'); }
 	if (!apiToken) { missing.push('API Token'); }
-	if (!projectId) { missing.push('Project ID'); }
+	if (!defaultProjectId && savedProjects.length === 0) { missing.push('Project ID'); }
 	if (!paidStatus) { missing.push('unpaid-work confirmation'); }
 
 	if (missing.length > 0) {
@@ -120,93 +123,46 @@ async function promptForWorkReport(
 		return;
 	}
 
-	const result = await vscode.window.showInformationMessage(
-		`Create a Rovas work report for commit ${shortHash}?` +
-			(commitMessage ? `\n\n“${commitMessage}”` : '') +
-			`\n\nTracked time to report: ${trackedLabel}` +
-			`\n\nA 3% usage fee applies to each report.`,
-		{ modal: true },
-		'Create work report',
-		'Skip'
-	);
+	const choice = await showWorkReportPrompt(context, {
+		shortHash,
+		commitMessage,
+		trackedLabel,
+		defaultProjectId,
+		apiKey: apiKey!,
+		apiToken: apiToken!
+	});
 
-	if (result !== 'Create work report') {
-		return;
-	}
-
-	const selectedProjectId = await pickProjectId(context, projectId);
-	if (!selectedProjectId) {
+	if (!choice) {
 		return;
 	}
 
 	await submitWorkReport({
-		context,
 		tracker,
 		repo,
 		commitHash,
 		apiKey: apiKey!,
 		apiToken: apiToken!,
-		projectId: selectedProjectId,
+		projectId: choice.projectId,
+		projectTitle: choice.projectTitle,
 		trackedSeconds
 	});
 }
 
-async function pickProjectId(
-	context: vscode.ExtensionContext,
-	configProjectId: string
-): Promise<string | undefined> {
-	let projectIdHistory: string[] = context.globalState.get('projectIdHistory', []);
-	const quickPickItems = projectIdHistory.map((id) => ({
-		label: id,
-		description: id === configProjectId ? 'Current (from settings)' : ''
-	}));
-	if (configProjectId && !projectIdHistory.includes(configProjectId)) {
-		quickPickItems.unshift({ label: configProjectId, description: 'Current (from settings)' });
-	}
-	quickPickItems.push({ label: 'Enter new Project ID...', description: 'Type a new Rovas Project ID' });
-
-	const selected = await vscode.window.showQuickPick(quickPickItems, {
-		placeHolder: 'Select Rovas Project ID for this work report',
-		ignoreFocusOut: true,
-		title: 'Rovas work report'
-	});
-	if (!selected) {
-		return undefined;
-	}
-
-	if (selected.label === 'Enter new Project ID...') {
-		const input = await vscode.window.showInputBox({
-			prompt: 'Enter new Rovas Project ID',
-			ignoreFocusOut: true,
-			title: 'Rovas work report'
-		});
-		if (!input) {
-			return undefined;
-		}
-		if (!projectIdHistory.includes(input)) {
-			projectIdHistory = [...projectIdHistory, input];
-			await context.globalState.update('projectIdHistory', projectIdHistory);
-		}
-		return input;
-	}
-
-	return selected.label;
-}
-
 async function submitWorkReport(opts: {
-	context: vscode.ExtensionContext;
 	tracker: TimeTracker;
 	repo: GitRepository;
 	commitHash: string;
 	apiKey: string;
 	apiToken: string;
 	projectId: string;
+	projectTitle: string;
 	trackedSeconds: number;
 }): Promise<void> {
-	const { tracker, repo, commitHash, apiKey, apiToken, projectId, trackedSeconds } = opts;
+	const { tracker, repo, commitHash, apiKey, apiToken, projectId, projectTitle, trackedSeconds } = opts;
 	const trackedHours = Math.max(0.01, Number((trackedSeconds / 3600).toFixed(2)));
 	const workspaceName = vscode.workspace.name || 'workspace';
 	const commitUrl = buildCommitUrl(repo, commitHash);
+	const projectLabel = projectTitle ? `${projectTitle} (#${projectId})` : `#${projectId}`;
 
 	const wrPayload = {
 		wr_classification: 1645,
@@ -245,7 +201,9 @@ async function submitWorkReport(opts: {
 		}
 
 		if (rovasReportId) {
-			vscode.window.showInformationMessage('Rovas work report created! Rovas ID: ' + rovasReportId);
+			vscode.window.showInformationMessage(
+				`Rovas work report created under ${projectLabel}. Rovas ID: ${rovasReportId}`
+			);
 			tracker.reset();
 
 			const laborValue = trackedHours * 10;

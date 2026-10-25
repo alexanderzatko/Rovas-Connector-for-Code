@@ -2,13 +2,20 @@
 // User-friendly settings panel for Rovas Connector
 
 import * as vscode from 'vscode';
-import { smokeTestConnection } from '../rovasApi/client';
+import { smokeTestConnection, fetchNode } from '../rovasApi/client';
+import {
+	SavedProject,
+	getSavedProjects,
+	removeSavedProject,
+	upsertSavedProject
+} from '../projects/projectStore';
 
 interface SettingsSnapshot {
 	hasApiKey: boolean;
 	hasApiToken: boolean;
 	projectId: string;
-	projectIdHistory: string[];
+	savedProjects: SavedProject[];
+	pauseWhenIdle: boolean;
 	inactivityTimeout: number;
 	paidStatus: boolean;
 }
@@ -86,7 +93,8 @@ async function getSettingsSnapshot(context: vscode.ExtensionContext): Promise<Se
 		hasApiKey: Boolean(apiKey),
 		hasApiToken: Boolean(apiToken),
 		projectId: config.get<string>('projectId', ''),
-		projectIdHistory: context.globalState.get<string[]>('projectIdHistory', []),
+		savedProjects: getSavedProjects(context),
+		pauseWhenIdle: config.get<boolean>('pauseWhenIdle', false),
 		inactivityTimeout: config.get<number>('inactivityTimeout', 30),
 		paidStatus: config.get<boolean>('paidStatus', false)
 	};
@@ -98,6 +106,7 @@ async function saveSettings(
 		apiKey?: string;
 		apiToken?: string;
 		projectId: string;
+		pauseWhenIdle: boolean;
 		inactivityTimeout: number;
 		paidStatus: boolean;
 	}
@@ -114,23 +123,34 @@ async function saveSettings(
 	}
 
 	await config.update('projectId', projectId, vscode.ConfigurationTarget.Global);
+	await config.update('pauseWhenIdle', Boolean(message.pauseWhenIdle), vscode.ConfigurationTarget.Global);
 	await config.update('inactivityTimeout', inactivityTimeout, vscode.ConfigurationTarget.Global);
 	await config.update('paidStatus', Boolean(message.paidStatus), vscode.ConfigurationTarget.Global);
 
 	if (projectId) {
-		const history = context.globalState.get<string[]>('projectIdHistory', []);
-		if (!history.includes(projectId)) {
-			await context.globalState.update('projectIdHistory', [...history, projectId]);
+		const apiKey =
+			(message.apiKey || '').trim() ||
+			(await context.secrets.get('rovas-connector.apiKey')) ||
+			'';
+		const apiToken =
+			(message.apiToken || '').trim() ||
+			(await context.secrets.get('rovas-connector.apiToken')) ||
+			'';
+		let title = '';
+		if (apiKey && apiToken) {
+			try {
+				const node = await fetchNode(projectId, apiKey, apiToken);
+				title = node.title || '';
+			} catch {
+				// Keep whatever title we already have if lookup fails
+			}
 		}
+		await upsertSavedProject(context, { id: projectId, title });
 	}
 }
 
 async function removeProjectIdFromHistory(context: vscode.ExtensionContext, projectId: string) {
-	const history = context.globalState.get<string[]>('projectIdHistory', []);
-	await context.globalState.update(
-		'projectIdHistory',
-		history.filter((id) => id !== projectId)
-	);
+	await removeSavedProject(context, projectId);
 }
 
 async function runSmokeTest(
@@ -148,14 +168,22 @@ async function runSmokeTest(
 
 	const result = await smokeTestConnection(apiKey, apiToken, projectId);
 	if (result.ok) {
+		await upsertSavedProject(context, {
+			id: String(result.nid),
+			title: result.title
+		});
+		const config = vscode.workspace.getConfiguration('rovas-connector');
+		await config.update('projectId', String(result.nid), vscode.ConfigurationTarget.Global);
+
 		panel.webview.postMessage({
 			command: 'testResult',
 			ok: true,
-			message: `Connected. Project #${result.nid}: “${result.title}”`
+			message: `Connected. Project #${result.nid}: “${result.title}” — saved to your project list.`
 		});
 		vscode.window.showInformationMessage(
 			`Rovas OK — project “${result.title}” (#${result.nid})`
 		);
+		await refreshPanel(context, panel);
 	} else {
 		panel.webview.postMessage({
 			command: 'testResult',
@@ -167,17 +195,19 @@ async function runSmokeTest(
 }
 
 function getWebviewContent(settings: SettingsSnapshot): string {
-	const historyHtml = settings.projectIdHistory.length
-		? settings.projectIdHistory
+	const historyHtml = settings.savedProjects.length
+		? settings.savedProjects
 				.map(
-					(id) => `
+					(project) => `
 			<li class="history-item">
-				<span>${escapeHtml(id)}${id === settings.projectId ? ' <em>(default)</em>' : ''}</span>
-				<button type="button" class="link-btn" data-remove="${escapeHtml(id)}">Remove</button>
+				<span><strong>${escapeHtml(project.title || 'Untitled')}</strong> <em>#${escapeHtml(project.id)}</em>${
+						project.id === settings.projectId ? ' <em>(default)</em>' : ''
+					}</span>
+				<button type="button" class="link-btn" data-remove="${escapeHtml(project.id)}">Remove</button>
 			</li>`
 				)
 				.join('')
-		: '<li class="muted">No saved Project IDs yet.</li>';
+		: '<li class="muted">No saved projects yet. Use Test connection to add one.</li>';
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -404,17 +434,25 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 					<div id="testResult" class="test-result" role="status"></div>
 				</div>
 				<div class="field">
-					<label>Saved Project IDs</label>
+					<label>Saved projects</label>
 					<ul class="history-list">${historyHtml}</ul>
+					<span class="hint">These appear in the work-report dialog so you can choose which Rovas project to report to.</span>
 				</div>
 			</section>
 
 			<section>
 				<h2>Time tracking</h2>
+				<div class="field checkbox-row">
+					<input type="checkbox" id="pauseWhenIdle" ${settings.pauseWhenIdle ? 'checked' : ''} />
+					<label for="pauseWhenIdle" style="margin:0;font-weight:400">
+						Pause when idle in the editor
+						<span class="hint">Off by default. Cursor Chat/Agent typing cannot be detected, so idle-pause often freezes the timer while you are still working. The timer always pauses when Cursor is in the background.</span>
+					</label>
+				</div>
 				<div class="field">
 					<label for="inactivityTimeout">Inactivity timeout (seconds)</label>
 					<input type="number" id="inactivityTimeout" min="5" value="${settings.inactivityTimeout}" />
-					<span class="hint">Seconds after the last activity before tracking pauses. Activity = typing, clicking/selecting, scrolling, or switching editors — not mouse movement alone. Tracking also pauses when Cursor is in the background. Minimum 5.</span>
+					<span class="hint">Only used when “Pause when idle” is on. Editor activity = typing in a file, selecting, scrolling, or switching editors. Minimum 5.</span>
 				</div>
 			</section>
 
@@ -450,6 +488,7 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 				apiKey: document.getElementById('apiKey').value,
 				apiToken: document.getElementById('apiToken').value,
 				projectId: document.getElementById('projectId').value,
+				pauseWhenIdle: document.getElementById('pauseWhenIdle').checked,
 				inactivityTimeout: parseInt(document.getElementById('inactivityTimeout').value, 10) || 30,
 				paidStatus: document.getElementById('paidStatus').checked
 			});
