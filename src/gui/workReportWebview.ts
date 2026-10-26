@@ -17,6 +17,8 @@ export interface WorkReportPromptInput {
 	defaultProjectId: string;
 	apiKey: string;
 	apiToken: string;
+	/** Folder / repo path where the commit happened (useful with multi-root workspaces) */
+	repoLabel?: string;
 }
 
 export interface WorkReportPromptResult {
@@ -209,6 +211,8 @@ function getWebviewContent(
 		<h1>Create Rovas work report?</h1>
 		<p class="meta">Commit <code>${escapeHtml(input.shortHash)}</code>${
 			input.commitMessage ? ` — “${escapeHtml(input.commitMessage)}”` : ''
+		}${
+			input.repoLabel ? `<br>Repository: <code>${escapeHtml(input.repoLabel)}</code>` : ''
 		}</p>
 
 		<div class="card">

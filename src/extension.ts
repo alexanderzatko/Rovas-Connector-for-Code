@@ -40,12 +40,10 @@ export function activate(context: vscode.ExtensionContext) {
 	// Read tracking preferences from configuration
 	const config = vscode.workspace.getConfiguration('rovas-connector');
 	const inactivityTimeout = config.get<number>('inactivityTimeout', 30);
-	const pauseWhenIdle = config.get<boolean>('pauseWhenIdle', false);
 
 	// Initialize time tracker
 	const tracker = new TimeTracker(context);
 	tracker.setInactivityTolerance(inactivityTimeout);
-	tracker.setPauseWhenIdle(pauseWhenIdle);
 	tracker.start();
 
 	// Status bar button: Settings
@@ -96,13 +94,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Listen for configuration changes
 	vscode.workspace.onDidChangeConfiguration(e => {
-		const cfg = vscode.workspace.getConfiguration('rovas-connector');
 		if (e.affectsConfiguration('rovas-connector.inactivityTimeout')) {
-			const newTimeout = cfg.get<number>('inactivityTimeout', 30);
+			const newTimeout = vscode.workspace.getConfiguration('rovas-connector').get<number>('inactivityTimeout', 30);
 			tracker.setInactivityTolerance(newTimeout);
-		}
-		if (e.affectsConfiguration('rovas-connector.pauseWhenIdle')) {
-			tracker.setPauseWhenIdle(cfg.get<boolean>('pauseWhenIdle', false));
 		}
 	});
 

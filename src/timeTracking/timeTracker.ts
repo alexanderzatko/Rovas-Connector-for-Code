@@ -2,6 +2,7 @@
 // Core logic for tracking active editing time in VS Code / Cursor
 
 import * as vscode from 'vscode';
+import { getSystemIdleSeconds } from './systemIdle';
 
 export type TrackingState = 'timing' | 'paused-unfocused' | 'paused-inactive';
 
@@ -10,13 +11,14 @@ export type TickListener = (info: { seconds: number; state: TrackingState }) => 
 export class TimeTracker {
   private trackedSeconds: number = 0;
   private lastActivity: number = Date.now();
-  private inactivityTolerance: number = 30; // seconds; used only if pauseWhenIdle
-  private pauseWhenIdle: boolean = false;
+  private inactivityTolerance: number = 30; // seconds
   private timer: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
   /** Last state decided by the tick — single source of truth for UI + counting */
   private currentState: TrackingState = 'timing';
   private tickListeners: TickListener[] = [];
+  /** Cached: whether OS idle detection works on this machine */
+  private systemIdleAvailable: boolean | null = null;
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -28,7 +30,6 @@ export class TimeTracker {
   public async setTrackedSeconds(seconds: number) {
     this.trackedSeconds = seconds;
     await this.saveState();
-    // Setting time is an intentional user action — resume timing immediately
     this.bumpActivity();
   }
 
@@ -64,7 +65,6 @@ export class TimeTracker {
   /** Status bar (and others) should subscribe here instead of using a separate interval. */
   public onTick(listener: TickListener): vscode.Disposable {
     this.tickListeners.push(listener);
-    // Push current snapshot immediately so UI is correct without waiting 1s
     listener({ seconds: this.trackedSeconds, state: this.currentState });
     return {
       dispose: () => {
@@ -101,7 +101,6 @@ export class TimeTracker {
     this.refreshState(true);
   }
 
-  /** Decide pause/timing once; only the 1s timer passes increment=true. */
   private refreshState(increment: boolean) {
     this.currentState = this.computeTrackingState();
     if (increment && this.currentState === 'timing') {
@@ -115,13 +114,23 @@ export class TimeTracker {
     if (!vscode.window.state.focused) {
       return 'paused-unfocused';
     }
-    // Optional: pause after editor-idle. Off by default — Cursor Chat / Agent
-    // typing does not fire text-document events, so idle pause feels broken there.
-    if (this.pauseWhenIdle) {
-      const idleSeconds = (Date.now() - this.lastActivity) / 1000;
-      if (idleSeconds >= this.inactivityTolerance) {
+
+    // Prefer OS input-idle: covers Cursor Chat/Agent typing (webview keystrokes
+    // never reach the VS Code extension API).
+    const systemIdle = getSystemIdleSeconds();
+    if (systemIdle !== null) {
+      this.systemIdleAvailable = true;
+      if (systemIdle >= this.inactivityTolerance) {
         return 'paused-inactive';
       }
+      return 'timing';
+    }
+
+    this.systemIdleAvailable = false;
+    // Fallback: editor-only activity (Chat typing will look idle)
+    const idleSeconds = (Date.now() - this.lastActivity) / 1000;
+    if (idleSeconds >= this.inactivityTolerance) {
+      return 'paused-inactive';
     }
     return 'timing';
   }
@@ -135,6 +144,13 @@ export class TimeTracker {
 
   public getTrackingState(): TrackingState {
     return this.currentState;
+  }
+
+  public usesSystemIdleDetection(): boolean {
+    if (this.systemIdleAvailable === null) {
+      this.systemIdleAvailable = getSystemIdleSeconds() !== null;
+    }
+    return this.systemIdleAvailable;
   }
 
   public isActivelyTracking(): boolean {
@@ -151,10 +167,5 @@ export class TimeTracker {
 
   public setInactivityTolerance(seconds: number) {
     this.inactivityTolerance = Math.max(5, seconds);
-  }
-
-  public setPauseWhenIdle(enabled: boolean) {
-    this.pauseWhenIdle = enabled;
-    this.refreshState(false);
   }
 }

@@ -9,15 +9,16 @@ import {
 	removeSavedProject,
 	upsertSavedProject
 } from '../projects/projectStore';
+import { getSystemIdleSeconds } from '../timeTracking/systemIdle';
 
 interface SettingsSnapshot {
 	hasApiKey: boolean;
 	hasApiToken: boolean;
 	projectId: string;
 	savedProjects: SavedProject[];
-	pauseWhenIdle: boolean;
 	inactivityTimeout: number;
 	paidStatus: boolean;
+	systemIdleSupported: boolean;
 }
 
 let currentPanel: vscode.WebviewPanel | undefined;
@@ -94,9 +95,9 @@ async function getSettingsSnapshot(context: vscode.ExtensionContext): Promise<Se
 		hasApiToken: Boolean(apiToken),
 		projectId: config.get<string>('projectId', ''),
 		savedProjects: getSavedProjects(context),
-		pauseWhenIdle: config.get<boolean>('pauseWhenIdle', false),
 		inactivityTimeout: config.get<number>('inactivityTimeout', 30),
-		paidStatus: config.get<boolean>('paidStatus', false)
+		paidStatus: config.get<boolean>('paidStatus', false),
+		systemIdleSupported: getSystemIdleSeconds() !== null
 	};
 }
 
@@ -106,7 +107,6 @@ async function saveSettings(
 		apiKey?: string;
 		apiToken?: string;
 		projectId: string;
-		pauseWhenIdle: boolean;
 		inactivityTimeout: number;
 		paidStatus: boolean;
 	}
@@ -123,7 +123,6 @@ async function saveSettings(
 	}
 
 	await config.update('projectId', projectId, vscode.ConfigurationTarget.Global);
-	await config.update('pauseWhenIdle', Boolean(message.pauseWhenIdle), vscode.ConfigurationTarget.Global);
 	await config.update('inactivityTimeout', inactivityTimeout, vscode.ConfigurationTarget.Global);
 	await config.update('paidStatus', Boolean(message.paidStatus), vscode.ConfigurationTarget.Global);
 
@@ -442,17 +441,14 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 
 			<section>
 				<h2>Time tracking</h2>
-				<div class="field checkbox-row">
-					<input type="checkbox" id="pauseWhenIdle" ${settings.pauseWhenIdle ? 'checked' : ''} />
-					<label for="pauseWhenIdle" style="margin:0;font-weight:400">
-						Pause when idle in the editor
-						<span class="hint">Off by default. Cursor Chat/Agent typing cannot be detected, so idle-pause often freezes the timer while you are still working. The timer always pauses when Cursor is in the background.</span>
-					</label>
-				</div>
 				<div class="field">
 					<label for="inactivityTimeout">Inactivity timeout (seconds)</label>
 					<input type="number" id="inactivityTimeout" min="5" value="${settings.inactivityTimeout}" />
-					<span class="hint">Only used when “Pause when idle” is on. Editor activity = typing in a file, selecting, scrolling, or switching editors. Minimum 5.</span>
+					<span class="hint">${
+						settings.systemIdleSupported
+							? 'Uses your Mac’s keyboard/mouse idle clock, so typing in Cursor Chat or Agent counts as activity — not only edits in code files. Timer also pauses when Cursor is in the background. Minimum 5.'
+							: 'OS idle detection is unavailable on this system; falling back to editor events only (Chat/Agent typing may look idle). Timer also pauses when Cursor is in the background. Minimum 5.'
+					}</span>
 				</div>
 			</section>
 
@@ -488,7 +484,6 @@ function getWebviewContent(settings: SettingsSnapshot): string {
 				apiKey: document.getElementById('apiKey').value,
 				apiToken: document.getElementById('apiToken').value,
 				projectId: document.getElementById('projectId').value,
-				pauseWhenIdle: document.getElementById('pauseWhenIdle').checked,
 				inactivityTimeout: parseInt(document.getElementById('inactivityTimeout').value, 10) || 30,
 				paidStatus: document.getElementById('paidStatus').checked
 			});

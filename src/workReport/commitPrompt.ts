@@ -7,6 +7,7 @@ import { showWorkReportPrompt } from '../gui/workReportWebview';
 import { getSavedProjects } from '../projects/projectStore';
 
 type GitRepository = {
+	rootUri?: vscode.Uri;
 	state: {
 		HEAD?: { commit?: string } | undefined;
 		remotes: Array<{ fetchUrl?: string; pushUrl?: string }>;
@@ -17,64 +18,220 @@ type GitRepository = {
 };
 
 type GitAPI = {
+	state: 'uninitialized' | 'initialized';
+	onDidChangeState: vscode.Event<'uninitialized' | 'initialized'>;
 	repositories: GitRepository[];
 	onDidOpenRepository: vscode.Event<GitRepository>;
 	onDidCloseRepository: vscode.Event<GitRepository>;
 };
 
+const POLL_INTERVAL_MS = 3000;
+const output = vscode.window.createOutputChannel('Rovas Connector');
+/** Avoid double prompts when both an event and the poll see the same HEAD change */
+const promptedCommits = new Set<string>();
+
 export function registerCommitWorkReportPrompt(
 	context: vscode.ExtensionContext,
 	tracker: TimeTracker
 ): void {
-	const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
-	if (!gitExtension) {
+	void setupGitWatchers(context, tracker);
+}
+
+function commitPromptKey(repo: GitRepository, commitHash: string): string {
+	return `${repoRoot(repo)}::${commitHash}`;
+}
+
+async function setupGitWatchers(
+	context: vscode.ExtensionContext,
+	tracker: TimeTracker
+): Promise<void> {
+	const ext = vscode.extensions.getExtension('vscode.git');
+	if (!ext) {
+		output.appendLine('[git] vscode.git extension not found — commit prompts disabled.');
 		return;
 	}
 
-	const api = gitExtension.getAPI(1) as GitAPI;
-	const watched = new Set<GitRepository>();
+	try {
+		const exports = ext.isActive ? ext.exports : await ext.activate();
+		const api = exports.getAPI(1) as GitAPI;
+		const watched = new Map<GitRepository, { lastHead: string; ready: boolean }>();
 
-	const watchRepository = (repo: GitRepository) => {
-		if (watched.has(repo)) {
-			return;
-		}
-		watched.add(repo);
-
-		let lastHead = repo.state.HEAD?.commit || '';
-
-		const handlePossibleCommit = async () => {
-			const newHead = repo.state.HEAD?.commit || '';
-			if (!newHead || newHead === lastHead) {
-				return;
-			}
-			lastHead = newHead;
-
-			const reportEvents = vscode.workspace
-				.getConfiguration('rovas-connector')
-				.get<string[]>('reportEvents', ['onCommit']);
-			if (!reportEvents.includes('onCommit')) {
+		const watchRepository = (repo: GitRepository) => {
+			if (watched.has(repo)) {
 				return;
 			}
 
-			await promptForWorkReport(context, tracker, repo, newHead);
+			const initialHead = repo.state.HEAD?.commit || '';
+			watched.set(repo, { lastHead: initialHead, ready: Boolean(initialHead) });
+			output.appendLine(
+				`[git] watching ${repoRoot(repo)} (HEAD ${initialHead ? initialHead.slice(0, 7) : 'unknown'})`
+			);
+
+			const handlePossibleCommit = async (source: string) => {
+				const entry = watched.get(repo);
+				if (!entry) {
+					return;
+				}
+
+				const newHead = repo.state.HEAD?.commit || '';
+				if (!newHead) {
+					return;
+				}
+
+				// First time we learn HEAD (repo model still loading) — baseline only, do not prompt
+				if (!entry.ready) {
+					entry.lastHead = newHead;
+					entry.ready = true;
+					output.appendLine(`[git] baseline HEAD ${newHead.slice(0, 7)} for ${repoRoot(repo)}`);
+					return;
+				}
+
+				if (newHead === entry.lastHead) {
+					return;
+				}
+
+				const previous = entry.lastHead;
+				entry.lastHead = newHead;
+				output.appendLine(
+					`[git] HEAD changed ${previous.slice(0, 7) || '(none)'} → ${newHead.slice(0, 7)} ` +
+						`in ${repoRoot(repo)} (${source})`
+				);
+
+				const reportEvents = vscode.workspace
+					.getConfiguration('rovas-connector')
+					.get<string[]>('reportEvents', ['onCommit']);
+				if (!reportEvents.includes('onCommit')) {
+					return;
+				}
+
+				await promptForWorkReportOnce(context, tracker, repo, newHead);
+			};
+
+			if (repo.onDidCommit) {
+				context.subscriptions.push(
+					repo.onDidCommit(() => {
+						void handlePossibleCommit('onDidCommit');
+					})
+				);
+			}
+
+			context.subscriptions.push(
+				repo.state.onDidChange(() => {
+					void handlePossibleCommit('state.onDidChange');
+				})
+			);
 		};
 
-		if (typeof repo.onDidCommit === 'function') {
-			context.subscriptions.push(repo.onDidCommit(() => {
-				void handlePossibleCommit();
-			}));
+		const watchAll = (reason: string) => {
+			output.appendLine(`[git] scan repositories (${reason}): ${api.repositories.length} found`);
+			for (const repo of api.repositories) {
+				watchRepository(repo);
+			}
+		};
+
+		const startWatching = () => {
+			watchAll('initialized');
+
+			context.subscriptions.push(
+				api.onDidOpenRepository((repo) => {
+					output.appendLine(`[git] repository opened: ${repoRoot(repo)}`);
+					watchRepository(repo);
+				})
+			);
+			context.subscriptions.push(
+				api.onDidCloseRepository((repo) => {
+					output.appendLine(`[git] repository closed: ${repoRoot(repo)}`);
+					watched.delete(repo);
+				})
+			);
+			context.subscriptions.push(
+				vscode.workspace.onDidChangeWorkspaceFolders(() => {
+					// Git may open/close repos asynchronously after folder changes
+					setTimeout(() => watchAll('workspace folders changed'), 1000);
+				})
+			);
+
+			// Reliable backup for multi-root + commits made via CLI / GitHub Desktop /
+			// Source Control UI that don't always emit onDidCommit promptly.
+			const poll = setInterval(() => {
+				for (const repo of api.repositories) {
+					if (!watched.has(repo)) {
+						watchRepository(repo);
+					}
+					const entry = watched.get(repo);
+					const head = repo.state.HEAD?.commit || '';
+					if (!entry || !head || head === entry.lastHead) {
+						continue;
+					}
+					if (!entry.ready) {
+						entry.lastHead = head;
+						entry.ready = true;
+						continue;
+					}
+					const previous = entry.lastHead;
+					entry.lastHead = head;
+					output.appendLine(
+						`[git] HEAD changed ${previous.slice(0, 7) || '(none)'} → ${head.slice(0, 7)} ` +
+							`in ${repoRoot(repo)} (poll)`
+					);
+					const reportEvents = vscode.workspace
+						.getConfiguration('rovas-connector')
+						.get<string[]>('reportEvents', ['onCommit']);
+					if (reportEvents.includes('onCommit')) {
+						void promptForWorkReportOnce(context, tracker, repo, head);
+					}
+				}
+			}, POLL_INTERVAL_MS);
+
+			context.subscriptions.push({ dispose: () => clearInterval(poll) });
+		};
+
+		if (api.state === 'initialized') {
+			startWatching();
+		} else {
+			output.appendLine('[git] waiting for git API to initialize…');
+			context.subscriptions.push(
+				api.onDidChangeState((state) => {
+					if (state === 'initialized') {
+						startWatching();
+					}
+				})
+			);
 		}
-
-		context.subscriptions.push(repo.state.onDidChange(() => {
-			void handlePossibleCommit();
-		}));
-	};
-
-	for (const repo of api.repositories) {
-		watchRepository(repo);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		output.appendLine(`[git] failed to set up commit watchers: ${msg}`);
 	}
-	context.subscriptions.push(api.onDidOpenRepository((repo) => watchRepository(repo)));
-	context.subscriptions.push(api.onDidCloseRepository((repo) => watched.delete(repo)));
+}
+
+function repoRoot(repo: GitRepository): string {
+	return repo.rootUri?.fsPath || '(unknown repo)';
+}
+
+async function promptForWorkReportOnce(
+	context: vscode.ExtensionContext,
+	tracker: TimeTracker,
+	repo: GitRepository,
+	commitHash: string
+): Promise<void> {
+	const key = commitPromptKey(repo, commitHash);
+	if (promptedCommits.has(key)) {
+		return;
+	}
+	promptedCommits.add(key);
+	// Bound memory if someone makes many commits in a long session
+	if (promptedCommits.size > 200) {
+		const first = promptedCommits.values().next().value;
+		if (first) {
+			promptedCommits.delete(first);
+		}
+	}
+	try {
+		await promptForWorkReport(context, tracker, repo, commitHash);
+	} catch (error) {
+		promptedCommits.delete(key);
+		throw error;
+	}
 }
 
 async function promptForWorkReport(
@@ -110,8 +267,9 @@ async function promptForWorkReport(
 
 	if (missing.length > 0) {
 		const result = await vscode.window.showInformationMessage(
-			`Commit ${shortHash} detected.${commitMessage ? `\n\n“${commitMessage}”` : ''}\n\n` +
-				`Tracked time: ${trackedLabel}\n\n` +
+			`Commit ${shortHash} detected in ${repoRoot(repo)}.` +
+				(commitMessage ? `\n\n“${commitMessage}”` : '') +
+				`\n\nTracked time: ${trackedLabel}\n\n` +
 				`To create a Rovas work report, finish setup first (missing: ${missing.join(', ')}).`,
 			{ modal: true },
 			'Open Settings',
@@ -129,7 +287,8 @@ async function promptForWorkReport(
 		trackedLabel,
 		defaultProjectId,
 		apiKey: apiKey!,
-		apiToken: apiToken!
+		apiToken: apiToken!,
+		repoLabel: repoRoot(repo),
 	});
 
 	if (!choice) {
@@ -160,7 +319,7 @@ async function submitWorkReport(opts: {
 }): Promise<void> {
 	const { tracker, repo, commitHash, apiKey, apiToken, projectId, projectTitle, trackedSeconds } = opts;
 	const trackedHours = Math.max(0.01, Number((trackedSeconds / 3600).toFixed(2)));
-	const workspaceName = vscode.workspace.name || 'workspace';
+	const workspaceName = vscode.workspace.name || repoRoot(repo) || 'workspace';
 	const commitUrl = buildCommitUrl(repo, commitHash);
 	const projectLabel = projectTitle ? `${projectTitle} (#${projectId})` : `#${projectId}`;
 
