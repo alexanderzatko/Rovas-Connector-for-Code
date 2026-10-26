@@ -106,7 +106,7 @@ export function activate(context: vscode.ExtensionContext) {
 	statusBarItem.show();
 	context.subscriptions.push(statusBarItem);
 
-	context.subscriptions.push(tracker.onTick(({ seconds, state }) => {
+	context.subscriptions.push(tracker.onTick(({ seconds, state, systemIdleSeconds, inactivityTolerance, usingSystemIdle }) => {
 		const minutes = Math.floor(seconds / 60);
 		const remainingSeconds = seconds % 60;
 
@@ -122,6 +122,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 		statusBarItem.text = `$(primitive-dot) Rovas: ${minutes}m ${remainingSeconds}s (${stateText})`;
 		statusBarItem.color = color;
+
+		const idleLabel =
+			systemIdleSeconds === null
+				? 'OS idle: unavailable (using editor fallback)'
+				: `OS idle: ${Math.floor(systemIdleSeconds)}s / timeout ${inactivityTolerance}s`;
+		statusBarItem.tooltip = `Rovas Connector\n${idleLabel}\nDetection: ${usingSystemIdle ? 'keyboard/mouse (incl. Chat)' : 'editor events only'}`;
 	}));
 
 	// Show tracked time command

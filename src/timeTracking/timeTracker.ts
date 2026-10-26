@@ -6,7 +6,13 @@ import { getSystemIdleSeconds } from './systemIdle';
 
 export type TrackingState = 'timing' | 'paused-unfocused' | 'paused-inactive';
 
-export type TickListener = (info: { seconds: number; state: TrackingState }) => void;
+export type TickListener = (info: {
+  seconds: number;
+  state: TrackingState;
+  systemIdleSeconds: number | null;
+  inactivityTolerance: number;
+  usingSystemIdle: boolean;
+}) => void;
 
 export class TimeTracker {
   private trackedSeconds: number = 0;
@@ -14,11 +20,10 @@ export class TimeTracker {
   private inactivityTolerance: number = 30; // seconds
   private timer: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
-  /** Last state decided by the tick — single source of truth for UI + counting */
   private currentState: TrackingState = 'timing';
   private tickListeners: TickListener[] = [];
-  /** Cached: whether OS idle detection works on this machine */
-  private systemIdleAvailable: boolean | null = null;
+  private usingSystemIdle = false;
+  private lastSystemIdleSeconds: number | null = null;
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -56,16 +61,15 @@ export class TimeTracker {
     this.bumpActivity();
   }
 
-  /** Mark user activity and refresh status (does not add a second by itself). */
+  /** Mark user activity (fallback path when OS idle is unavailable). */
   public bumpActivity() {
     this.lastActivity = Date.now();
     this.refreshState(false);
   }
 
-  /** Status bar (and others) should subscribe here instead of using a separate interval. */
   public onTick(listener: TickListener): vscode.Disposable {
     this.tickListeners.push(listener);
-    listener({ seconds: this.trackedSeconds, state: this.currentState });
+    listener(this.snapshot());
     return {
       dispose: () => {
         this.tickListeners = this.tickListeners.filter((l) => l !== listener);
@@ -74,12 +78,11 @@ export class TimeTracker {
   }
 
   private registerListeners() {
+    // These matter mainly when OS idle detection is unavailable.
+    // Keep them as a fallback; they must not prevent idle pause when OS idle works.
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument(() => this.bumpActivity()),
       vscode.window.onDidChangeActiveTextEditor(() => this.bumpActivity()),
-      vscode.window.onDidChangeVisibleTextEditors(() => this.bumpActivity()),
-      vscode.window.onDidChangeTextEditorSelection(() => this.bumpActivity()),
-      vscode.window.onDidChangeTextEditorVisibleRanges(() => this.bumpActivity()),
       vscode.window.onDidChangeWindowState((state) => {
         if (state.focused) {
           this.bumpActivity();
@@ -88,13 +91,6 @@ export class TimeTracker {
         }
       })
     );
-
-    if (vscode.window.onDidChangeActiveTerminal) {
-      this.disposables.push(vscode.window.onDidChangeActiveTerminal(() => this.bumpActivity()));
-    }
-    if (vscode.window.onDidChangeVisibleNotebookEditors) {
-      this.disposables.push(vscode.window.onDidChangeVisibleNotebookEditors(() => this.bumpActivity()));
-    }
   }
 
   private tick() {
@@ -115,28 +111,41 @@ export class TimeTracker {
       return 'paused-unfocused';
     }
 
-    // Prefer OS input-idle: covers Cursor Chat/Agent typing (webview keystrokes
-    // never reach the VS Code extension API).
     const systemIdle = getSystemIdleSeconds();
+    this.lastSystemIdleSeconds = systemIdle;
+
     if (systemIdle !== null) {
-      this.systemIdleAvailable = true;
+      this.usingSystemIdle = true;
       if (systemIdle >= this.inactivityTolerance) {
         return 'paused-inactive';
       }
       return 'timing';
     }
 
-    this.systemIdleAvailable = false;
-    // Fallback: editor-only activity (Chat typing will look idle)
+    this.usingSystemIdle = false;
     const idleSeconds = (Date.now() - this.lastActivity) / 1000;
-    if (idleSeconds >= this.inactivityTolerance) {
+    if (idleSeconds >= this.inactivityTimeoutSafe()) {
       return 'paused-inactive';
     }
     return 'timing';
   }
 
+  private inactivityTimeoutSafe(): number {
+    return Math.max(5, this.inactivityTolerance);
+  }
+
+  private snapshot() {
+    return {
+      seconds: this.trackedSeconds,
+      state: this.currentState,
+      systemIdleSeconds: this.lastSystemIdleSeconds,
+      inactivityTolerance: this.inactivityTolerance,
+      usingSystemIdle: this.usingSystemIdle
+    };
+  }
+
   private emitTick() {
-    const info = { seconds: this.trackedSeconds, state: this.currentState };
+    const info = this.snapshot();
     for (const listener of this.tickListeners) {
       listener(info);
     }
@@ -147,10 +156,7 @@ export class TimeTracker {
   }
 
   public usesSystemIdleDetection(): boolean {
-    if (this.systemIdleAvailable === null) {
-      this.systemIdleAvailable = getSystemIdleSeconds() !== null;
-    }
-    return this.systemIdleAvailable;
+    return this.usingSystemIdle;
   }
 
   public isActivelyTracking(): boolean {

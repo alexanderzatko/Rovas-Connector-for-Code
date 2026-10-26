@@ -3,49 +3,86 @@
 // counts as activity via the OS input-idle clock.
 
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
 import * as os from 'os';
+
+let cachedAt = 0;
+let cachedSeconds: number | null = null;
+const CACHE_MS = 400;
 
 /**
  * Seconds since the last OS-level keyboard/mouse input, or null if unsupported.
  * Includes input in Cursor Chat/Agent webviews (unlike VS Code editor events).
  */
 export function getSystemIdleSeconds(): number | null {
+	const now = Date.now();
+	if (now - cachedAt < CACHE_MS) {
+		return cachedSeconds;
+	}
+	cachedAt = now;
 	try {
 		switch (os.platform()) {
 			case 'darwin':
-				return getMacIdleSeconds();
+				cachedSeconds = getMacIdleSeconds();
+				break;
 			case 'linux':
-				return getLinuxIdleSeconds();
+				cachedSeconds = getLinuxIdleSeconds();
+				break;
 			case 'win32':
-				return getWindowsIdleSeconds();
+				cachedSeconds = getWindowsIdleSeconds();
+				break;
 			default:
-				return null;
+				cachedSeconds = null;
 		}
 	} catch {
-		return null;
+		cachedSeconds = null;
 	}
+	return cachedSeconds;
 }
 
 function getMacIdleSeconds(): number | null {
-	// HIDIdleTime is nanoseconds since last HID input
-	const out = execFileSync('ioreg', ['-c', 'IOHIDSystem'], {
-		encoding: 'utf8',
-		timeout: 1000,
-		maxBuffer: 2 * 1024 * 1024
+	// Electron/Cursor extension hosts often have a minimal PATH without /usr/sbin,
+	// so calling bare `ioreg` silently fails and idle detection never runs.
+	const ioreg = ['/usr/sbin/ioreg', '/sbin/ioreg', 'ioreg'].find((p) => {
+		try {
+			return p === 'ioreg' || fs.existsSync(p);
+		} catch {
+			return false;
+		}
 	});
-	const match = out.match(/"HIDIdleTime"\s*=\s*(\d+)/);
-	if (!match) {
+	if (!ioreg) {
 		return null;
 	}
-	return Number(match[1]) / 1_000_000_000;
+
+	// -r -d 4 keeps the dump small; HIDIdleTime is nanoseconds since last HID input
+	const out = execFileSync(ioreg, ['-c', 'IOHIDSystem', '-r', '-d', '4'], {
+		encoding: 'utf8',
+		timeout: 1500,
+		maxBuffer: 2 * 1024 * 1024,
+		env: { ...process.env, PATH: `/usr/sbin:/sbin:/usr/bin:/bin:${process.env.PATH || ''}` }
+	});
+
+	const matches = [...out.matchAll(/"HIDIdleTime"\s*=\s*(\d+)/g)];
+	if (matches.length === 0) {
+		return null;
+	}
+	// Use the maximum idle among entries (some nodes stay near 0)
+	let maxNs = 0;
+	for (const m of matches) {
+		const ns = Number(m[1]);
+		if (Number.isFinite(ns) && ns > maxNs) {
+			maxNs = ns;
+		}
+	}
+	return maxNs / 1_000_000_000;
 }
 
 function getLinuxIdleSeconds(): number | null {
-	// xprintidle outputs milliseconds (X11). May be missing on Wayland.
 	try {
 		const out = execFileSync('xprintidle', [], {
 			encoding: 'utf8',
-			timeout: 1000
+			timeout: 1000,
+			env: { ...process.env, PATH: `/usr/bin:/bin:${process.env.PATH || ''}` }
 		}).trim();
 		const ms = Number(out);
 		return Number.isFinite(ms) ? ms / 1000 : null;
@@ -55,7 +92,6 @@ function getLinuxIdleSeconds(): number | null {
 }
 
 function getWindowsIdleSeconds(): number | null {
-	// GetLastInputInfo via PowerShell; returns idle milliseconds
 	const script =
 		"$sig='[DllImport(\"user32.dll\")]public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);[StructLayout(LayoutKind.Sequential)]public struct LASTINPUTINFO{public uint cbSize;public uint dwTime;}';" +
 		"$t=Add-Type -MemberDefinition $sig -Name U32Idle -Namespace Win32 -PassThru;" +

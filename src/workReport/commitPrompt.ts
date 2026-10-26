@@ -252,9 +252,11 @@ async function promptForWorkReport(
 	const trackedLabel = formatDuration(trackedSeconds);
 
 	let commitMessage = '';
+	let commitSubject = '';
 	try {
 		const commit = await repo.getCommit(commitHash);
-		commitMessage = (commit.message || '').split('\n')[0].trim();
+		commitMessage = (commit.message || '').trim();
+		commitSubject = commitMessage.split('\n')[0].trim();
 	} catch {
 		// optional
 	}
@@ -268,7 +270,7 @@ async function promptForWorkReport(
 	if (missing.length > 0) {
 		const result = await vscode.window.showInformationMessage(
 			`Commit ${shortHash} detected in ${repoRoot(repo)}.` +
-				(commitMessage ? `\n\n“${commitMessage}”` : '') +
+				(commitSubject ? `\n\n“${commitSubject}”` : '') +
 				`\n\nTracked time: ${trackedLabel}\n\n` +
 				`To create a Rovas work report, finish setup first (missing: ${missing.join(', ')}).`,
 			{ modal: true },
@@ -283,7 +285,7 @@ async function promptForWorkReport(
 
 	const choice = await showWorkReportPrompt(context, {
 		shortHash,
-		commitMessage,
+		commitMessage: commitSubject,
 		trackedLabel,
 		defaultProjectId,
 		apiKey: apiKey!,
@@ -299,6 +301,7 @@ async function promptForWorkReport(
 		tracker,
 		repo,
 		commitHash,
+		commitMessage,
 		apiKey: apiKey!,
 		apiToken: apiToken!,
 		projectId: choice.projectId,
@@ -311,21 +314,25 @@ async function submitWorkReport(opts: {
 	tracker: TimeTracker;
 	repo: GitRepository;
 	commitHash: string;
+	commitMessage: string;
 	apiKey: string;
 	apiToken: string;
 	projectId: string;
 	projectTitle: string;
 	trackedSeconds: number;
 }): Promise<void> {
-	const { tracker, repo, commitHash, apiKey, apiToken, projectId, projectTitle, trackedSeconds } = opts;
+	const { tracker, repo, commitHash, commitMessage, apiKey, apiToken, projectId, projectTitle, trackedSeconds } = opts;
 	const trackedHours = Math.max(0.01, Number((trackedSeconds / 3600).toFixed(2)));
 	const workspaceName = vscode.workspace.name || repoRoot(repo) || 'workspace';
 	const commitUrl = buildCommitUrl(repo, commitHash);
 	const projectLabel = projectTitle ? `${projectTitle} (#${projectId})` : `#${projectId}`;
+	const descriptionBase = commitMessage || `Commit ${commitHash}`;
+	const wrDescription =
+		`${descriptionBase}\n\nThis report was created by the Rovas Connector for Cursor/VS extension`;
 
 	const wrPayload = {
-		wr_classification: 1645,
-		wr_description: `Cursor/VS Code commit: ${commitHash}. Proof: ${commitUrl}`,
+		wr_classification: 1578,
+		wr_description: wrDescription,
 		wr_activity_name: `Programming work on "${workspaceName}"`,
 		wr_hours: trackedHours,
 		wr_web_address: commitUrl,
