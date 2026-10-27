@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import { getSystemIdleSeconds } from './systemIdle';
 
-export type TrackingState = 'timing' | 'paused-unfocused' | 'paused-inactive';
+export type TrackingState = 'stopped' | 'timing' | 'paused-unfocused' | 'paused-inactive';
 
 export type TickListener = (info: {
   seconds: number;
@@ -20,7 +20,8 @@ export class TimeTracker {
   private inactivityTolerance: number = 30; // seconds
   private timer: NodeJS.Timeout | undefined;
   private disposables: vscode.Disposable[] = [];
-  private currentState: TrackingState = 'timing';
+  private currentState: TrackingState = 'stopped';
+  private running = false;
   private tickListeners: TickListener[] = [];
   private usingSystemIdle = false;
   private lastSystemIdleSeconds: number | null = null;
@@ -30,39 +31,78 @@ export class TimeTracker {
   public async loadState() {
     const stored = await this.context.globalState.get<number>('trackedSeconds', 0);
     this.trackedSeconds = stored;
+    this.emitTick();
   }
 
   public async setTrackedSeconds(seconds: number) {
     this.trackedSeconds = seconds;
     await this.saveState();
-    this.bumpActivity();
+    if (this.running) {
+      this.bumpActivity();
+    } else {
+      this.emitTick();
+    }
+  }
+
+  /** Load persisted time and show status, but do not count until start(). */
+  public initialize() {
+    this.loadState().then(() => {
+      this.currentState = 'stopped';
+      this.emitTick();
+    });
   }
 
   public start() {
+    if (this.running) {
+      this.bumpActivity();
+      return;
+    }
+    this.running = true;
     this.loadState().then(() => {
       this.bumpActivity();
       this.timer = setInterval(() => this.tick(), 1000);
       this.registerListeners();
+      this.refreshState(false);
     });
   }
 
   public stop() {
+    if (!this.running && !this.timer) {
+      this.currentState = 'stopped';
+      this.emitTick();
+      return;
+    }
+    this.running = false;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     this.disposables.forEach((d) => d.dispose());
     this.disposables = [];
+    this.currentState = 'stopped';
+    this.emitTick();
+  }
+
+  public isRunning(): boolean {
+    return this.running;
   }
 
   public reset() {
     this.trackedSeconds = 0;
     this.saveState();
-    this.bumpActivity();
+    if (this.running) {
+      this.bumpActivity();
+    } else {
+      this.currentState = 'stopped';
+      this.emitTick();
+    }
   }
 
   /** Mark user activity (fallback path when OS idle is unavailable). */
   public bumpActivity() {
+    if (!this.running) {
+      return;
+    }
     this.lastActivity = Date.now();
     this.refreshState(false);
   }
@@ -84,6 +124,9 @@ export class TimeTracker {
       vscode.workspace.onDidChangeTextDocument(() => this.bumpActivity()),
       vscode.window.onDidChangeActiveTextEditor(() => this.bumpActivity()),
       vscode.window.onDidChangeWindowState((state) => {
+        if (!this.running) {
+          return;
+        }
         if (state.focused) {
           this.bumpActivity();
         } else {
@@ -107,6 +150,10 @@ export class TimeTracker {
   }
 
   private computeTrackingState(): TrackingState {
+    if (!this.running) {
+      return 'stopped';
+    }
+
     if (!vscode.window.state.focused) {
       return 'paused-unfocused';
     }

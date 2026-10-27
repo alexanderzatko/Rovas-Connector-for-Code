@@ -2,15 +2,32 @@
   "name": "rovas-connector",
   "displayName": "Rovas Connector",
   "description": "VS Code extension for reporting programming time to Rovas.",
-  "version": "0.0.3",
+  "version": "0.0.4",
+  "publisher": "AlexanderZatkoNF",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexanderzatko/Rovas-Connector-for-Code.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexanderzatko/Rovas-Connector-for-Code/issues"
+  },
+  "homepage": "https://github.com/alexanderzatko/Rovas-Connector-for-Code#readme",
   "engines": {
     "vscode": "^1.103.0"
   },
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "rovas",
+    "time-tracking",
+    "git",
+    "work-report"
+  ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

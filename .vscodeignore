@@ -9,3 +9,7 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+images/*.ai
+images/*.svg
+*.vsix
+npm-debug.log

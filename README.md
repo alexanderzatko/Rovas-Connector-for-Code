@@ -4,7 +4,7 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 
 ## Features
 - Securely store Rovas API credentials using VS Code SecretStorage
-- Track programming activity and time spent in VS Code
+- Manual start/stop of programming time tracking (status bar shows START until you begin)
 - Status bar controls for adjusting and resetting tracked time
 - Flexible Project ID selection and management
 - Automatic work report creation on git commit
@@ -19,6 +19,7 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 - Set your Rovas API Key and Token using the command palette:
   - `Rovas Connector: Set API Key`
   - `Rovas Connector: Set API Token`
+- Click the status bar item when it shows `(START)`, or run `Rovas Connector: Start Timer`, to begin tracking. Click again while running (or use `Stop Timer`) to stop.
 - Adjust or reset tracked time using the status bar buttons.
 - Manage Project IDs with `Rovas Connector: Manage Project IDs`.
 - On git commit, the extension will prompt to create a work report and select a Project ID.
@@ -34,6 +35,8 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 ## Commands
 - `rovas-connector.setApiKey`: Set Rovas API Key
 - `rovas-connector.setApiToken`: Set Rovas API Token
+- `rovas-connector.startTimer`: Start time tracking
+- `rovas-connector.stopTimer`: Stop time tracking
 - `rovas-connector.adjustTrackedTime`: Adjust tracked time
 - `rovas-connector.resetTimer`: Reset tracked time
 - `rovas-connector.showTrackedTime`: Show tracked time
@@ -47,4 +50,4 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 Pull requests and issues are welcome. Please follow standard TypeScript and VS Code extension development practices.
 
 ## License
-GPLv3
+MIT

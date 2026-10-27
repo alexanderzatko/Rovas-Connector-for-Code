@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.0.4]
+- Publishing metadata: publisher, MIT license, repository links, Marketplace icon.
+- Manual start/stop for time tracking; status bar shows `START` until tracking begins.
+
 ## [0.0.3]
 - Remember skipped commits per git repository and combine them into one work report (compare/range proof-of-work URL when possible, with all commit messages in the description).
 - Allow overriding tracked time in the work-report dialog before submit.

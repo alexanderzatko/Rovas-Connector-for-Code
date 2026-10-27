@@ -41,10 +41,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const config = vscode.workspace.getConfiguration('rovas-connector');
 	const inactivityTimeout = config.get<number>('inactivityTimeout', 30);
 
-	// Initialize time tracker
+	// Initialize time tracker (stopped until the user starts)
 	const tracker = new TimeTracker(context);
 	tracker.setInactivityTolerance(inactivityTimeout);
-	tracker.start();
+	tracker.initialize();
 
 	// Status bar button: Settings
 	const settingsButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
@@ -83,14 +83,6 @@ export function activate(context: vscode.ExtensionContext) {
 		showAdjustTimeWebview(context, tracker);
 	});
 	context.subscriptions.push(adjustTimeDisposable);
-	// Show timing started dialog (dismissible, auto-close after 2s)
-	const timingMsg = vscode.window.showInformationMessage('Rovas Connector: Time tracking started.', { modal: false }, 'Dismiss');
-	setTimeout(() => {
-		timingMsg.then(() => {
-			// No action needed, just let it close
-		});
-		vscode.commands.executeCommand('workbench.action.closeMessages');
-	}, 2000);
 
 	// Listen for configuration changes
 	vscode.workspace.onDidChangeConfiguration(e => {
@@ -102,7 +94,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Status bar item for tracked time (driven by the tracker tick — same state used for counting)
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-	statusBarItem.text = 'Rovas: 0m 0s';
+	statusBarItem.text = 'Rovas: 0m 0s (START)';
+	statusBarItem.command = 'rovas-connector.startTimer';
 	statusBarItem.show();
 	context.subscriptions.push(statusBarItem);
 
@@ -111,24 +104,60 @@ export function activate(context: vscode.ExtensionContext) {
 		const remainingSeconds = seconds % 60;
 
 		let stateText = 'timing';
-		let color = '#00FF00'; // green
-		if (state === 'paused-unfocused') {
+		let color: string | undefined = '#00FF00'; // green
+		if (state === 'stopped') {
+			stateText = 'START';
+			color = '#87CEEB'; // sky blue — click to begin
+			statusBarItem.command = 'rovas-connector.startTimer';
+		} else if (state === 'paused-unfocused') {
 			stateText = 'paused · background';
 			color = '#FFA500'; // orange
+			statusBarItem.command = 'rovas-connector.stopTimer';
 		} else if (state === 'paused-inactive') {
 			stateText = 'paused · idle';
 			color = '#FFA500'; // orange
+			statusBarItem.command = 'rovas-connector.stopTimer';
+		} else {
+			statusBarItem.command = 'rovas-connector.stopTimer';
 		}
 
 		statusBarItem.text = `$(primitive-dot) Rovas: ${minutes}m ${remainingSeconds}s (${stateText})`;
 		statusBarItem.color = color;
 
+		if (state === 'stopped') {
+			statusBarItem.tooltip = 'Rovas Connector\nClick to start time tracking';
+			return;
+		}
+
 		const idleLabel =
 			systemIdleSeconds === null
 				? 'OS idle: unavailable (using editor fallback)'
 				: `OS idle: ${Math.floor(systemIdleSeconds)}s / timeout ${inactivityTolerance}s`;
-		statusBarItem.tooltip = `Rovas Connector\n${idleLabel}\nDetection: ${usingSystemIdle ? 'keyboard/mouse (incl. Chat)' : 'editor events only'}`;
+		statusBarItem.tooltip = `Rovas Connector\n${idleLabel}\nDetection: ${usingSystemIdle ? 'keyboard/mouse (incl. Chat)' : 'editor events only'}\nClick to stop tracking`;
 	}));
+
+	// Start / stop timer commands
+	const startTimerDisposable = vscode.commands.registerCommand('rovas-connector.startTimer', () => {
+		if (tracker.isRunning()) {
+			return;
+		}
+		tracker.start();
+		const timingMsg = vscode.window.showInformationMessage('Rovas Connector: Time tracking started.', { modal: false }, 'Dismiss');
+		setTimeout(() => {
+			timingMsg.then(() => {});
+			vscode.commands.executeCommand('workbench.action.closeMessages');
+		}, 2000);
+	});
+	context.subscriptions.push(startTimerDisposable);
+
+	const stopTimerDisposable = vscode.commands.registerCommand('rovas-connector.stopTimer', () => {
+		if (!tracker.isRunning()) {
+			return;
+		}
+		tracker.stop();
+		vscode.window.showInformationMessage('Rovas Connector: Time tracking stopped.');
+	});
+	context.subscriptions.push(stopTimerDisposable);
 
 	// Show tracked time command
 	const showTimeDisposable = vscode.commands.registerCommand('rovas-connector.showTrackedTime', () => {
@@ -142,12 +171,6 @@ export function activate(context: vscode.ExtensionContext) {
 		}, 3000);
 	});
 	context.subscriptions.push(showTimeDisposable);
-
-	// Hello World command
-	const helloDisposable = vscode.commands.registerCommand('rovas-connector.helloWorld', () => {
-		vscode.window.showInformationMessage('Hello World from Rovas Connector!');
-	});
-	context.subscriptions.push(helloDisposable);
 
 	// Reset timer command
 	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', () => {
