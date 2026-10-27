@@ -9,21 +9,31 @@ import {
 	upsertSavedProject
 } from '../projects/projectStore';
 import { fetchNode } from '../rovasApi/client';
+import { DeferredCommit, shortHash } from '../workReport/deferredCommitStore';
 
 export interface WorkReportPromptInput {
 	shortHash: string;
 	commitMessage: string;
+	trackedSeconds: number;
 	trackedLabel: string;
 	defaultProjectId: string;
 	apiKey: string;
 	apiToken: string;
+	/** Prefill for the editable work-report description */
+	description: string;
 	/** Folder / repo path where the commit happened (useful with multi-root workspaces) */
 	repoLabel?: string;
+	/** Earlier commits in this repo that were skipped and will be included */
+	deferredCommits?: DeferredCommit[];
 }
 
 export interface WorkReportPromptResult {
 	projectId: string;
 	projectTitle: string;
+	/** User-confirmed (possibly overridden) duration in seconds */
+	trackedSeconds: number;
+	/** User-edited work report description */
+	description: string;
 }
 
 export function showWorkReportPrompt(
@@ -104,12 +114,54 @@ export function showWorkReportPrompt(
 					return;
 				}
 
-				finish({ projectId, projectTitle });
+				const trackedSeconds = parseDurationMessage(message);
+				if (trackedSeconds === null) {
+					panel.webview.postMessage({
+						command: 'error',
+						message: 'Enter a valid duration (hours, minutes, seconds ≥ 0).'
+					});
+					return;
+				}
+
+				const description = String(message.description || '').trim();
+				if (!description) {
+					panel.webview.postMessage({
+						command: 'error',
+						message: 'Enter a work report description.'
+					});
+					return;
+				}
+
+				finish({ projectId, projectTitle, trackedSeconds, description });
 			}
 		});
 
 		panel.webview.html = getWebviewContent(input, projects, defaultId);
 	});
+}
+
+function parseDurationMessage(message: {
+	hours?: unknown;
+	minutes?: unknown;
+	seconds?: unknown;
+}): number | null {
+	const hours = Number(message.hours);
+	const minutes = Number(message.minutes);
+	const seconds = Number(message.seconds);
+	if (![hours, minutes, seconds].every((n) => Number.isFinite(n) && n >= 0)) {
+		return null;
+	}
+	const total = Math.floor(hours) * 3600 + Math.floor(minutes) * 60 + Math.floor(seconds);
+	return Math.max(0, total);
+}
+
+function splitDuration(totalSeconds: number): { hours: number; minutes: number; seconds: number } {
+	const safe = Math.max(0, Math.floor(totalSeconds));
+	return {
+		hours: Math.floor(safe / 3600),
+		minutes: Math.floor((safe % 3600) / 60),
+		seconds: safe % 60
+	};
 }
 
 function getWebviewContent(
@@ -133,6 +185,26 @@ function getWebviewContent(
 			: 'No project selected';
 
 	const hasProjects = projects.length > 0;
+	const deferred = input.deferredCommits || [];
+	const duration = splitDuration(input.trackedSeconds);
+
+	const deferredBlock =
+		deferred.length === 0
+			? ''
+			: `<div class="card">
+			<strong>Also including ${deferred.length} earlier skipped commit${deferred.length === 1 ? '' : 's'}</strong>
+			<ul class="commit-list">
+				${deferred
+					.map((c) => {
+						const subject = (c.message || '').split('\n')[0].trim();
+						return `<li><code>${escapeHtml(shortHash(c.hash))}</code>${
+							subject ? ` — ${escapeHtml(subject)}` : ''
+						}</li>`;
+					})
+					.join('')}
+			</ul>
+			<p class="hint" style="margin-bottom:0">These will be combined into one proof-of-work with the current commit.</p>
+		</div>`;
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -160,8 +232,13 @@ function getWebviewContent(
 			border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
 		}
 		.card strong { display: block; margin-bottom: 4px; }
+		.commit-list {
+			margin: 8px 0 0;
+			padding-left: 18px;
+		}
+		.commit-list li { margin-bottom: 4px; }
 		label { display: block; font-weight: 500; margin-bottom: 6px; }
-		select, input[type="text"] {
+		select, input[type="text"], input[type="number"], textarea {
 			width: 100%;
 			box-sizing: border-box;
 			padding: 8px 10px;
@@ -171,6 +248,19 @@ function getWebviewContent(
 			border-radius: 2px;
 			margin-bottom: 10px;
 		}
+		textarea {
+			min-height: 140px;
+			resize: vertical;
+			font-family: inherit;
+			line-height: 1.4;
+		}
+		.duration-row {
+			display: flex;
+			gap: 10px;
+			margin-bottom: 10px;
+		}
+		.duration-row > div { flex: 1; }
+		.duration-row label { font-weight: 400; font-size: 0.9em; }
 		.hint { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin: 0 0 12px; }
 		.selected {
 			font-size: 1.05rem;
@@ -215,10 +305,28 @@ function getWebviewContent(
 			input.repoLabel ? `<br>Repository: <code>${escapeHtml(input.repoLabel)}</code>` : ''
 		}</p>
 
-		<div class="card">
-			<strong>Tracked time</strong>
-			${escapeHtml(input.trackedLabel)}
+		${deferredBlock}
+
+		<label>Tracked time</label>
+		<div class="duration-row">
+			<div>
+				<label for="hours">Hours</label>
+				<input type="number" id="hours" min="0" step="1" value="${duration.hours}" />
+			</div>
+			<div>
+				<label for="minutes">Minutes</label>
+				<input type="number" id="minutes" min="0" step="1" value="${duration.minutes}" />
+			</div>
+			<div>
+				<label for="seconds">Seconds</label>
+				<input type="number" id="seconds" min="0" step="1" value="${duration.seconds}" />
+			</div>
 		</div>
+		<p class="hint">You can override the tracked duration before submitting.</p>
+
+		<label for="description">Description</label>
+		<textarea id="description" rows="8">${escapeHtml(input.description)}</textarea>
+		<p class="hint">Edit the generated description before it is sent to Rovas.</p>
 
 		<label for="projectSelect">Rovas project</label>
 		<select id="projectSelect">
@@ -239,7 +347,7 @@ function getWebviewContent(
 			<button type="button" class="secondary" id="skipBtn">Skip</button>
 		</div>
 		<div id="error" class="error"></div>
-		<p class="fee">A 3% usage fee applies to each report.</p>
+		<p class="fee">A 3% usage fee applies to each report. Skipping remembers this commit for a later combined report in this repository.</p>
 	</div>
 	<script>
 		const vscode = acquireVsCodeApi();
@@ -267,6 +375,14 @@ function getWebviewContent(
 			selectedLabel.textContent = opt ? opt.textContent : 'No project selected';
 		}
 
+		function durationFields() {
+			return {
+				hours: document.getElementById('hours').value,
+				minutes: document.getElementById('minutes').value,
+				seconds: document.getElementById('seconds').value
+			};
+		}
+
 		select.addEventListener('change', updateLabel);
 		newInput.addEventListener('input', updateLabel);
 
@@ -276,11 +392,15 @@ function getWebviewContent(
 
 		document.getElementById('createBtn').addEventListener('click', () => {
 			errorEl.classList.remove('visible');
+			const duration = durationFields();
+			const description = document.getElementById('description').value;
 			if (select.value === '__new__') {
 				vscode.postMessage({
 					command: 'create',
 					mode: 'new',
-					newProjectId: newInput.value
+					newProjectId: newInput.value,
+					description,
+					...duration
 				});
 				return;
 			}
@@ -288,7 +408,9 @@ function getWebviewContent(
 				command: 'create',
 				mode: 'saved',
 				projectId: select.value,
-				projectTitle: currentTitle()
+				projectTitle: currentTitle(),
+				description,
+				...duration
 			});
 		});
 

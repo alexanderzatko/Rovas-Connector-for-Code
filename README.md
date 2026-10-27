@@ -8,6 +8,8 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 - Status bar controls for adjusting and resetting tracked time
 - Flexible Project ID selection and management
 - Automatic work report creation on git commit
+- Skip a report and remember that commit (per repository); later commits can combine skipped ones into one proof-of-work
+- Override tracked time in the work-report dialog before submitting
 
 ## Installation
 1. Download the extension from the Marketplace or build from source.
@@ -20,6 +22,8 @@ A Visual Studio Code extension for tracking programming time and reporting work 
 - Adjust or reset tracked time using the status bar buttons.
 - Manage Project IDs with `Rovas Connector: Manage Project IDs`.
 - On git commit, the extension will prompt to create a work report and select a Project ID.
+- Choose **Skip** to keep tracking time and remember the commit for that repository. The next time you create a report in the same repo, skipped commits are combined into one proof-of-work (compare URL when possible) with combined commit messages.
+- You can edit hours/minutes/seconds and the generated description in the dialog before submitting.
 
 ## Configuration
 - `rovas-connector.inactivityTimeout`: Set inactivity timeout (seconds) for time tracking.
