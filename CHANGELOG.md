@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6]
+- Create Report prefers the active workspace/git repository and no longer auto-selects saved commits from other projects.
+
+## [0.0.5]
+- Combine Adjust Time and Reset Time into one Adjust Time dialog (with reset).
+- Add Create Report status bar action to submit a work report from all saved (skipped) commits for a repository.
+
 ## [0.0.4]
 - Publishing metadata: publisher, MIT license, repository links, Marketplace icon.
 - Manual start/stop for time tracking; status bar shows `START` until tracking begins.

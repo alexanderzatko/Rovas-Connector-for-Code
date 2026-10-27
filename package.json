@@ -2,7 +2,7 @@
   "name": "rovas-connector",
   "displayName": "Rovas Connector",
   "description": "VS Code extension for reporting programming time to Rovas.",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "publisher": "AlexanderZatkoNF",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -63,6 +63,10 @@
       {
         "command": "rovas-connector.adjustTrackedTime",
         "title": "Rovas Connector: Adjust Tracked Time"
+      },
+      {
+        "command": "rovas-connector.createWorkReport",
+        "title": "Rovas Connector: Create Work Report"
       },
       {
         "command": "rovas-connector.manageProjectIds",

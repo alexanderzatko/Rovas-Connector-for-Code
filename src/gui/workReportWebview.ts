@@ -23,8 +23,13 @@ export interface WorkReportPromptInput {
 	description: string;
 	/** Folder / repo path where the commit happened (useful with multi-root workspaces) */
 	repoLabel?: string;
-	/** Earlier commits in this repo that were skipped and will be included */
+	/** Earlier commits in this repo that were skipped and will be included (on-commit flow) */
 	deferredCommits?: DeferredCommit[];
+	/**
+	 * onCommit: prompted after a git commit (Skip remembers the commit).
+	 * manual: end-of-day report from already-saved commits (Cancel leaves them stored).
+	 */
+	mode?: 'onCommit' | 'manual';
 }
 
 export interface WorkReportPromptResult {
@@ -187,24 +192,53 @@ function getWebviewContent(
 	const hasProjects = projects.length > 0;
 	const deferred = input.deferredCommits || [];
 	const duration = splitDuration(input.trackedSeconds);
+	const isManual = input.mode === 'manual';
+	const dismissLabel = isManual ? 'Cancel' : 'Skip';
+	const feeHint = isManual
+		? 'A 3% usage fee applies to each report. Cancel leaves these commits saved for later.'
+		: 'A 3% usage fee applies to each report. Skipping remembers this commit for a later combined report in this repository.';
 
-	const deferredBlock =
-		deferred.length === 0
+	const commitListHtml = (commits: DeferredCommit[]) =>
+		`<ul class="commit-list">
+			${commits
+				.map((c) => {
+					const subject = (c.message || '').split('\n')[0].trim();
+					return `<li><code>${escapeHtml(shortHash(c.hash))}</code>${
+						subject ? ` — ${escapeHtml(subject)}` : ''
+					}</li>`;
+				})
+				.join('')}
+		</ul>`;
+
+	const deferredBlock = isManual
+		? deferred.length === 0
+			? ''
+			: `<div class="card">
+			<strong>${deferred.length} saved commit${deferred.length === 1 ? '' : 's'}</strong>
+			${commitListHtml(deferred)}
+			<p class="hint" style="margin-bottom:0">These will be combined into one proof-of-work.</p>
+		</div>`
+		: deferred.length === 0
 			? ''
 			: `<div class="card">
 			<strong>Also including ${deferred.length} earlier skipped commit${deferred.length === 1 ? '' : 's'}</strong>
-			<ul class="commit-list">
-				${deferred
-					.map((c) => {
-						const subject = (c.message || '').split('\n')[0].trim();
-						return `<li><code>${escapeHtml(shortHash(c.hash))}</code>${
-							subject ? ` — ${escapeHtml(subject)}` : ''
-						}</li>`;
-					})
-					.join('')}
-			</ul>
+			${commitListHtml(deferred)}
 			<p class="hint" style="margin-bottom:0">These will be combined into one proof-of-work with the current commit.</p>
 		</div>`;
+
+	const metaBlock = isManual
+		? `<p class="meta">${
+				deferred.length === 1
+					? `Report from saved commit <code>${escapeHtml(shortHash(deferred[0].hash))}</code>`
+					: `Report from <strong>${deferred.length}</strong> saved commits`
+			}${
+				input.repoLabel ? `<br>Repository: <code>${escapeHtml(input.repoLabel)}</code>` : ''
+			}</p>`
+		: `<p class="meta">Commit <code>${escapeHtml(input.shortHash)}</code>${
+				input.commitMessage ? ` — “${escapeHtml(input.commitMessage)}”` : ''
+			}${
+				input.repoLabel ? `<br>Repository: <code>${escapeHtml(input.repoLabel)}</code>` : ''
+			}</p>`;
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -299,11 +333,7 @@ function getWebviewContent(
 <body>
 	<div class="wrap">
 		<h1>Create Rovas work report?</h1>
-		<p class="meta">Commit <code>${escapeHtml(input.shortHash)}</code>${
-			input.commitMessage ? ` — “${escapeHtml(input.commitMessage)}”` : ''
-		}${
-			input.repoLabel ? `<br>Repository: <code>${escapeHtml(input.repoLabel)}</code>` : ''
-		}</p>
+		${metaBlock}
 
 		${deferredBlock}
 
@@ -344,10 +374,10 @@ function getWebviewContent(
 
 		<div class="actions">
 			<button type="button" class="primary" id="createBtn">Create work report</button>
-			<button type="button" class="secondary" id="skipBtn">Skip</button>
+			<button type="button" class="secondary" id="skipBtn">${escapeHtml(dismissLabel)}</button>
 		</div>
 		<div id="error" class="error"></div>
-		<p class="fee">A 3% usage fee applies to each report. Skipping remembers this commit for a later combined report in this repository.</p>
+		<p class="fee">${escapeHtml(feeHint)}</p>
 	</div>
 	<script>
 		const vscode = acquireVsCodeApi();

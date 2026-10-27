@@ -7,9 +7,14 @@ import { showWorkReportPrompt } from '../gui/workReportWebview';
 import { getSavedProjects } from '../projects/projectStore';
 import {
 	DeferredCommit,
+	DeferredRepoCommits,
 	addDeferredCommit,
 	clearDeferredCommits,
 	getDeferredCommits,
+	isPathInsideRepo,
+	listDeferredByRepo,
+	listDeferredForRoots,
+	repoRootsEqual,
 	shortHash as toShortHash
 } from './deferredCommitStore';
 
@@ -42,6 +47,152 @@ export function registerCommitWorkReportPrompt(
 	tracker: TimeTracker
 ): void {
 	void setupGitWatchers(context, tracker);
+}
+
+/**
+ * End-of-day style report: create a work report from commits previously skipped
+ * for the active workspace repository (not other open/past projects).
+ */
+export async function promptManualWorkReport(
+	context: vscode.ExtensionContext,
+	tracker: TimeTracker
+): Promise<void> {
+	const allPending = listDeferredByRepo(context);
+	if (allPending.length === 0) {
+		vscode.window.showInformationMessage(
+			'No saved commits to report. Skip a commit prompt first, or wait until you have deferred commits.'
+		);
+		return;
+	}
+
+	const openRoots = await getOpenWorkspaceRepoRoots();
+	const activeRoot = await getActiveRepositoryRoot();
+	const inWorkspace = listDeferredForRoots(context, openRoots);
+
+	let candidates = inWorkspace;
+	if (candidates.length === 0) {
+		const otherCount = allPending.reduce((sum, e) => sum + e.commits.length, 0);
+		const choice = await vscode.window.showInformationMessage(
+			`No saved commits for the current workspace` +
+				(activeRoot ? ` (${activeRoot})` : '') +
+				`. ${otherCount} saved commit${otherCount === 1 ? '' : 's'} exist for other project(s).`,
+			'Choose another project',
+			'Cancel'
+		);
+		if (choice !== 'Choose another project') {
+			return;
+		}
+		candidates = allPending;
+	}
+
+	const selected = await pickDeferredRepo(candidates, activeRoot);
+	if (!selected) {
+		return;
+	}
+
+	await promptManualWorkReportForRepo(context, tracker, selected.repoRoot, selected.commits);
+}
+
+async function pickDeferredRepo(
+	candidates: DeferredRepoCommits[],
+	activeRoot: string | undefined
+): Promise<DeferredRepoCommits | undefined> {
+	if (candidates.length === 0) {
+		return undefined;
+	}
+
+	if (activeRoot) {
+		const activeMatch = candidates.find((entry) => repoRootsEqual(entry.repoRoot, activeRoot));
+		if (activeMatch) {
+			return activeMatch;
+		}
+	}
+
+	if (candidates.length === 1) {
+		return candidates[0];
+	}
+
+	const items = candidates.map((entry) => {
+		const isActive = activeRoot ? repoRootsEqual(entry.repoRoot, activeRoot) : false;
+		return {
+			label: `${entry.commits.length} commit${entry.commits.length === 1 ? '' : 's'}`,
+			description: entry.repoRoot,
+			detail: isActive ? 'Active editor repository' : undefined,
+			entry
+		};
+	});
+	items.sort((a, b) => {
+		const aActive = a.detail ? 0 : 1;
+		const bActive = b.detail ? 0 : 1;
+		if (aActive !== bActive) {
+			return aActive - bActive;
+		}
+		return a.description.localeCompare(b.description);
+	});
+
+	const picked = await vscode.window.showQuickPick(items, {
+		placeHolder: 'Choose which repository’s saved commits to report',
+		ignoreFocusOut: true
+	});
+	return picked?.entry;
+}
+
+async function getOpenWorkspaceRepoRoots(): Promise<string[]> {
+	const roots = new Set<string>();
+	for (const folder of vscode.workspace.workspaceFolders || []) {
+		roots.add(folder.uri.fsPath);
+	}
+
+	const api = await getGitApi();
+	if (api) {
+		for (const repo of api.repositories) {
+			const root = repoRoot(repo);
+			if (root && root !== '(unknown repo)') {
+				roots.add(root);
+			}
+		}
+	}
+
+	const active = await getActiveRepositoryRoot();
+	if (active) {
+		roots.add(active);
+	}
+
+	return [...roots];
+}
+
+async function getActiveRepositoryRoot(): Promise<string | undefined> {
+	const api = await getGitApi();
+	const editorUri = vscode.window.activeTextEditor?.document.uri;
+
+	if (api && editorUri && editorUri.scheme === 'file') {
+		const matches = api.repositories
+			.map((repo) => repoRoot(repo))
+			.filter((root) => root !== '(unknown repo)' && isPathInsideRepo(editorUri.fsPath, root))
+			.sort((a, b) => b.length - a.length); // deepest repo wins (monorepo / nested)
+		if (matches[0]) {
+			return matches[0];
+		}
+
+		const folder = vscode.workspace.getWorkspaceFolder(editorUri);
+		if (folder) {
+			return folder.uri.fsPath;
+		}
+	}
+
+	if (api?.repositories.length === 1) {
+		const root = repoRoot(api.repositories[0]);
+		if (root !== '(unknown repo)') {
+			return root;
+		}
+	}
+
+	const folders = vscode.workspace.workspaceFolders;
+	if (folders?.length === 1) {
+		return folders[0].uri.fsPath;
+	}
+
+	return undefined;
 }
 
 function commitPromptKey(repo: GitRepository, commitHash: string): string {
@@ -273,6 +424,114 @@ async function resolveCommitMessage(
 		// optional — fall through to stored/fallback message
 	}
 	return fallback.trim();
+}
+
+async function getGitApi(): Promise<GitAPI | undefined> {
+	const ext = vscode.extensions.getExtension('vscode.git');
+	if (!ext) {
+		return undefined;
+	}
+	try {
+		const exports = ext.isActive ? ext.exports : await ext.activate();
+		return exports.getAPI(1) as GitAPI;
+	} catch {
+		return undefined;
+	}
+}
+
+async function findRepositoryByRoot(repoRootPath: string): Promise<GitRepository | undefined> {
+	const api = await getGitApi();
+	if (!api) {
+		return undefined;
+	}
+	return api.repositories.find((repo) => repoRootsEqual(repoRoot(repo), repoRootPath));
+}
+
+function stubRepository(repoRootPath: string): GitRepository {
+	return {
+		rootUri: vscode.Uri.file(repoRootPath),
+		state: {
+			remotes: [],
+			onDidChange: () => ({ dispose() {} })
+		},
+		getCommit: async () => ({ hash: '', message: '' })
+	};
+}
+
+async function promptManualWorkReportForRepo(
+	context: vscode.ExtensionContext,
+	tracker: TimeTracker,
+	repoRootPath: string,
+	deferredCommits: DeferredCommit[]
+): Promise<void> {
+	const config = vscode.workspace.getConfiguration('rovas-connector');
+	const apiKey = await context.secrets.get('rovas-connector.apiKey');
+	const apiToken = await context.secrets.get('rovas-connector.apiToken');
+	const defaultProjectId = config.get<string>('projectId', '');
+	const paidStatus = config.get<boolean>('paidStatus', false);
+	const savedProjects = getSavedProjects(context);
+
+	const trackedSeconds = tracker.getTrackedSeconds();
+	const trackedLabel = formatDuration(trackedSeconds);
+
+	const missing: string[] = [];
+	if (!apiKey) { missing.push('API Key'); }
+	if (!apiToken) { missing.push('API Token'); }
+	if (!defaultProjectId && savedProjects.length === 0) { missing.push('Project ID'); }
+	if (!paidStatus) { missing.push('unpaid-work confirmation'); }
+
+	if (missing.length > 0) {
+		const result = await vscode.window.showInformationMessage(
+			`Cannot create a work report yet (missing: ${missing.join(', ')}).`,
+			{ modal: true },
+			'Open Settings'
+		);
+		if (result === 'Open Settings') {
+			await vscode.commands.executeCommand('rovas-connector.openSettings');
+		}
+		return;
+	}
+
+	const repo = (await findRepositoryByRoot(repoRootPath)) || stubRepository(repoRootPath);
+	const commitsForReport = await enrichCommitMessages(repo, deferredCommits);
+	if (commitsForReport.length === 0) {
+		vscode.window.showInformationMessage('No saved commits to report for this repository.');
+		return;
+	}
+
+	const newest = commitsForReport[commitsForReport.length - 1];
+	const defaultDescription = buildCombinedDescription(repo, commitsForReport);
+
+	const choice = await showWorkReportPrompt(context, {
+		shortHash: toShortHash(newest.hash),
+		commitMessage: (newest.message || '').split('\n')[0].trim(),
+		trackedSeconds,
+		trackedLabel,
+		defaultProjectId,
+		apiKey: apiKey!,
+		apiToken: apiToken!,
+		description: defaultDescription,
+		repoLabel: repoRootPath,
+		deferredCommits: commitsForReport,
+		mode: 'manual'
+	});
+
+	if (!choice) {
+		return;
+	}
+
+	await submitWorkReport({
+		tracker,
+		context,
+		repo,
+		commits: commitsForReport,
+		apiKey: apiKey!,
+		apiToken: apiToken!,
+		projectId: choice.projectId,
+		projectTitle: choice.projectTitle,
+		trackedSeconds: choice.trackedSeconds,
+		description: choice.description
+	});
 }
 
 async function promptForWorkReport(

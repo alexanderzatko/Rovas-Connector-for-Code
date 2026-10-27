@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { TimeTracker } from './timeTracking/timeTracker';
 import { showAdjustTimeWebview } from './gui/adjustTimeWebview';
 import { showSettingsWebview } from './gui/settingsWebview';
-import { registerCommitWorkReportPrompt } from './workReport/commitPrompt';
+import { promptManualWorkReport, registerCommitWorkReportPrompt } from './workReport/commitPrompt';
 import { formatProjectLabel, getSavedProjects, removeSavedProject } from './projects/projectStore';
 
 // This method is called when your extension is activated
@@ -54,21 +54,21 @@ export function activate(context: vscode.ExtensionContext) {
 	settingsButton.show();
 	context.subscriptions.push(settingsButton);
 
-	// Status bar button: Adjust time
+	// Status bar button: Adjust time (includes reset)
 	const adjustTimeButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
 	adjustTimeButton.text = '$(edit) Adjust Time';
 	adjustTimeButton.command = 'rovas-connector.adjustTrackedTime';
-	adjustTimeButton.tooltip = 'Adjust tracked time';
+	adjustTimeButton.tooltip = 'Adjust or reset tracked time';
 	adjustTimeButton.show();
 	context.subscriptions.push(adjustTimeButton);
 
-	// Status bar button: Reset time
-	const resetTimeButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
-	resetTimeButton.text = '$(trash) Reset Time';
-	resetTimeButton.command = 'rovas-connector.resetTimer';
-	resetTimeButton.tooltip = 'Reset tracked time';
-	resetTimeButton.show();
-	context.subscriptions.push(resetTimeButton);
+	// Status bar button: Create report from saved commits
+	const createReportButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+	createReportButton.text = '$(cloud-upload) Create Report';
+	createReportButton.command = 'rovas-connector.createWorkReport';
+	createReportButton.tooltip = 'Create a Rovas work report from saved (skipped) commits';
+	createReportButton.show();
+	context.subscriptions.push(createReportButton);
 
 	// Settings GUI command
 	const openSettingsDisposable = vscode.commands.registerCommand('rovas-connector.openSettings', async () => {
@@ -172,12 +172,22 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(showTimeDisposable);
 
-	// Reset timer command
+	// Reset timer command (also available from Adjust Time)
 	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', () => {
 		tracker.reset();
 		vscode.window.showInformationMessage('Time tracker reset.');
 	});
 	context.subscriptions.push(resetDisposable);
+
+	// Manual / end-of-day work report from deferred commits
+	const createReportDisposable = vscode.commands.registerCommand(
+		'rovas-connector.createWorkReport',
+		async () => {
+			tracker.bumpActivity();
+			await promptManualWorkReport(context, tracker);
+		}
+	);
+	context.subscriptions.push(createReportDisposable);
 
 	// Command to manage saved projects
 	const manageProjectIdsDisposable = vscode.commands.registerCommand('rovas-connector.manageProjectIds', async () => {
