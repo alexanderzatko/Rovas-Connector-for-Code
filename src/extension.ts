@@ -2,6 +2,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { TimeTracker } from './timeTracking/timeTracker';
+import { resetTimerWithCommitPrompt } from './timeTracking/resetTimerFlow';
 import { showAdjustTimeWebview } from './gui/adjustTimeWebview';
 import { showSettingsWebview } from './gui/settingsWebview';
 import { promptManualWorkReport, registerCommitWorkReportPrompt } from './workReport/commitPrompt';
@@ -173,9 +174,8 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(showTimeDisposable);
 
 	// Reset timer command (also available from Adjust Time)
-	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', () => {
-		tracker.reset();
-		vscode.window.showInformationMessage('Time tracker reset.');
+	const resetDisposable = vscode.commands.registerCommand('rovas-connector.resetTimer', async () => {
+		await resetTimerWithCommitPrompt(context, tracker);
 	});
 	context.subscriptions.push(resetDisposable);
 

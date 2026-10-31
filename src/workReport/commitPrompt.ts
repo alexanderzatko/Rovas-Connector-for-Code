@@ -161,7 +161,8 @@ async function getOpenWorkspaceRepoRoots(): Promise<string[]> {
 	return [...roots];
 }
 
-async function getActiveRepositoryRoot(): Promise<string | undefined> {
+/** Git/workspace root for the active editor, or the sole open folder/repo. */
+export async function getActiveRepositoryRoot(): Promise<string | undefined> {
 	const api = await getGitApi();
 	const editorUri = vscode.window.activeTextEditor?.document.uri;
 

@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import { TimeTracker } from '../timeTracking/timeTracker';
+import { resetTimerWithCommitPrompt } from '../timeTracking/resetTimerFlow';
 
 export function showAdjustTimeWebview(context: vscode.ExtensionContext, tracker: TimeTracker) {
 	const panel = vscode.window.createWebviewPanel(
@@ -27,9 +28,8 @@ export function showAdjustTimeWebview(context: vscode.ExtensionContext, tracker:
 			vscode.window.showInformationMessage(`Tracked time set to ${h}h ${m}m ${s}s.`);
 			panel.dispose();
 		} else if (message.command === 'reset') {
-			tracker.reset();
-			vscode.window.showInformationMessage('Time tracker reset.');
 			panel.dispose();
+			await resetTimerWithCommitPrompt(context, tracker);
 		} else if (message.command === 'cancel') {
 			panel.dispose();
 		}

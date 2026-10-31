@@ -2,7 +2,7 @@
   "name": "rovas-connector",
   "displayName": "Rovas Connector",
   "description": "VS Code extension for reporting programming time to Rovas.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "AlexanderZatkoNF",
   "license": "MIT",
   "icon": "images/icon.png",

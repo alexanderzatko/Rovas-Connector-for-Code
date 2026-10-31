@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.0.7]
+- When resetting the timer, ask whether to delete saved (skipped) commit info for the current project only; other projects’ deferred commits are kept.
+
 ## [0.0.6]
 - Create Report prefers the active workspace/git repository and no longer auto-selects saved commits from other projects.
 
